@@ -1,0 +1,5 @@
+{
+  "name": "Stock Metadata Generator",
+  "description": "A powerful tool to bulk-generate SEO-optimized titles, descriptions, and keywords for stock assets (images, vectors, videos) using AI. Customize metadata for various platforms like Adobe Stock, Shutterstock, and more, and export everything as a CSV file.",
+  "requestFramePermissions": []
+}
