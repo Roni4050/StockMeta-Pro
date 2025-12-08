@@ -3,35 +3,54 @@ import { GoogleGenAI, Type, GenerateContentResponse } from '@google/genai';
 import { ProcessedFile, Settings, Platform, ImageType, AIProvider, GeminiModel } from '../types';
 import { retryWithBackoff } from './apiUtils';
 
-// Updated Backup keys
-const BACKUP_API_KEYS = [
-    "AIzaSyCUQV-kO9lFEDcyyst6YN8krLsdMp9EHHg",
-    "AIzaSyANPT8cfdXaZvep5aiIu9oZhni7wjHFQ3E",
-    "AIzaSyBwt1o4d2JCH7JBuY50fNf6hM3rV2HWywE",
-    "AIzaSyBaWFh_wxZ7WKbh0zjK3u-9ENjxZypuDk4",
-    "AIzaSyAis9ds4DL-8r42N2B4owkcTBcir38ZLfw",
-    "AIzaSyD0aUK_GHZO6Y_AW-YOiQZmYF54bkv_JvI"
-];
+// Global indices for Round-Robin Key Rotation
+let globalGeminiKeyIndex = 0;
+let globalMistralKeyIndex = 0;
+let globalOpenRouterKeyIndex = 0;
 
-// Internal Mistral Key added to pool
-const BACKUP_MISTRAL_KEYS = [
-    "zNG6OjF6i62sIPgsxsAF4vCZC8kFPbs0"
-];
+/**
+ * Helper to safely parse JSON from AI response, handling markdown blocks and extra text.
+ */
+const parseJSONSafely = (text: string): any => {
+    try {
+        // 1. Remove markdown code blocks if present
+        let cleanText = text.replace(/```json\s*|```/g, '').trim();
+        
+        // 2. Try direct parse
+        return JSON.parse(cleanText);
+    } catch (e) {
+        // 3. Fallback: Find the first '{' and last '}' to extract the JSON object
+        const start = text.indexOf('{');
+        const end = text.lastIndexOf('}');
+        
+        if (start !== -1 && end !== -1) {
+            try {
+                const jsonStr = text.substring(start, end + 1);
+                return JSON.parse(jsonStr);
+            } catch (e2) {
+                // Try to fix common trailing comma issue before giving up
+                try {
+                     const fixedStr = text.substring(start, end + 1).replace(/,\s*}/g, '}').replace(/,\s*]/g, ']');
+                     return JSON.parse(fixedStr);
+                } catch(e3) {
+                    // Ignore
+                }
+            }
+        }
+        throw new Error(`Failed to parse JSON. Raw output preview: ${text.substring(0, 50)}...`);
+    }
+};
 
 /**
  * Resizes and compresses an image to ensure it fits within AI model constraints.
- * @param url The blob URL or data URL of the image.
- * @param maxDimension The maximum width or height (default 1024 for Pixtral stability).
- * @returns A promise resolving to the processed { mimeType, data }.
  */
-const resizeImage = async (url: string, maxDimension: number = 1024): Promise<{ mimeType: string; data: string }> => {
+const resizeImage = async (url: string, maxDimension: number = 800, outputType: 'image/jpeg' | 'image/png' = 'image/jpeg'): Promise<{ mimeType: string; data: string }> => {
     return new Promise((resolve, reject) => {
         const img = new Image();
         img.onload = () => {
             let width = img.width;
             let height = img.height;
             
-            // Calculate new dimensions keeping aspect ratio
             if (width > maxDimension || height > maxDimension) {
                 const ratio = Math.min(maxDimension / width, maxDimension / height);
                 width *= ratio;
@@ -39,29 +58,31 @@ const resizeImage = async (url: string, maxDimension: number = 1024): Promise<{ 
             }
             
             const canvas = document.createElement('canvas');
-            canvas.width = width;
-            canvas.height = height;
+            canvas.width = Math.floor(width);
+            canvas.height = Math.floor(height);
             const ctx = canvas.getContext('2d');
             if (!ctx) {
                 reject(new Error('Canvas context unavailable'));
                 return;
             }
             
-            // Fill white background for transparency handling (prevents black backgrounds in JPEGs)
-            ctx.fillStyle = '#FFFFFF';
-            ctx.fillRect(0, 0, width, height);
+            if (outputType === 'image/jpeg') {
+                ctx.fillStyle = '#FFFFFF';
+                ctx.fillRect(0, 0, width, height);
+            } else {
+                ctx.clearRect(0, 0, width, height);
+            }
             
             ctx.drawImage(img, 0, 0, width, height);
             
-            // Compress to JPEG 0.85 to reduce payload size significantly
-            const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+            const dataUrl = canvas.toDataURL(outputType, 0.9);
             const parts = dataUrl.split(',');
             if (parts.length < 2) {
                 reject(new Error("Invalid data URL generated during resize"));
                 return;
             }
             resolve({
-                mimeType: 'image/jpeg',
+                mimeType: outputType,
                 data: parts[1]
             });
         };
@@ -71,26 +92,22 @@ const resizeImage = async (url: string, maxDimension: number = 1024): Promise<{ 
 };
 
 /**
- * Converts an SVG data URL to a PNG base64 string by rendering it on a canvas.
- * @param svgDataUrl The data URL of the SVG image.
- * @returns A promise that resolves with the base64 encoded PNG data.
+ * Converts an SVG data URL to a PNG base64 string.
  */
 const convertSvgToPng = (svgDataUrl: string): Promise<string> => {
     return new Promise((resolve, reject) => {
         const img = new Image();
         img.onload = () => {
             const canvas = document.createElement('canvas');
-            const size = 512; // Standard size for analysis
+            const size = 1024; 
             canvas.width = size;
             canvas.height = size;
             const ctx = canvas.getContext('2d');
-            if (!ctx) {
-                return reject(new Error('Could not get canvas context'));
-            }
-            // Add a white background for SVGs with transparency
+            if (!ctx) return reject(new Error('Could not get canvas context'));
+            
             ctx.fillStyle = 'white';
             ctx.fillRect(0, 0, canvas.width, canvas.height);
-            // Draw image scaled and centered
+            
             const hRatio = canvas.width / img.width;
             const vRatio = canvas.height / img.height;
             const ratio = Math.min(hRatio, vRatio);
@@ -101,16 +118,13 @@ const convertSvgToPng = (svgDataUrl: string): Promise<string> => {
             const pngDataUrl = canvas.toDataURL('image/png');
             resolve(pngDataUrl.split(',')[1]);
         };
-        img.onerror = () => reject(new Error('Failed to load SVG image for conversion.'));
+        img.onerror = () => reject(new Error('Failed to load SVG image.'));
         img.src = svgDataUrl;
     });
 };
 
 /**
- * Extracts multiple frames from a video file and returns them as base64 encoded JPEGs with timestamps.
- * @param videoFile The video file to process.
- * @param frameCount The number of frames to extract.
- * @returns A promise that resolves with an array of objects containing frame data and timestamps.
+ * Extracts multiple frames from a video file.
  */
 const extractFramesFromVideo = (videoFile: File, frameCount: number = 6): Promise<{ timestamp: number; data: string; }[]> => {
     return new Promise((resolve, reject) => {
@@ -119,50 +133,92 @@ const extractFramesFromVideo = (videoFile: File, frameCount: number = 6): Promis
         const videoUrl = URL.createObjectURL(videoFile);
         video.src = videoUrl;
         video.muted = true;
+        video.playsInline = true;
+        video.preload = 'auto'; // Ensure metadata loads
+        
         const frames: { timestamp: number; data: string; }[] = [];
 
         video.onloadeddata = async () => {
-            canvas.width = 512; // Limit video frame size for performance
-            canvas.height = 512 * (video.videoHeight / video.videoWidth);
-            const ctx = canvas.getContext('2d');
-            if (!ctx) {
+            try {
+                canvas.width = 512;
+                canvas.height = Math.floor(512 * (video.videoHeight / video.videoWidth));
+                const ctx = canvas.getContext('2d');
+                if (!ctx) {
+                    throw new Error("Canvas context not available");
+                }
+
+                const duration = video.duration;
+                // If duration is Infinity or NaN (sometimes happens with streams), default to something safe or just grab current frame
+                const safeDuration = (isFinite(duration) && duration > 0) ? duration : 1; 
+                const interval = safeDuration / (frameCount + 1);
+
+                for (let i = 1; i <= frameCount; i++) {
+                    const seekTime = interval * i;
+                    if (seekTime > safeDuration) continue;
+                    
+                    try {
+                        video.currentTime = seekTime;
+                        
+                        // Robust seek with timeout - Increased to 10s
+                        await new Promise<void>((res, rej) => {
+                            const seekTimeout = setTimeout(() => {
+                                rej(new Error(`Video seek timed out at ${seekTime}s`));
+                            }, 10000); // 10s timeout per frame
+                            
+                            const onSeeked = () => {
+                                clearTimeout(seekTimeout);
+                                video.removeEventListener('seeked', onSeeked);
+                                video.removeEventListener('error', onError);
+                                res();
+                            };
+
+                            const onError = (e: Event) => {
+                                clearTimeout(seekTimeout);
+                                video.removeEventListener('seeked', onSeeked);
+                                video.removeEventListener('error', onError);
+                                rej(new Error('Video error during seek'));
+                            };
+                            
+                            video.addEventListener('seeked', onSeeked);
+                            video.addEventListener('error', onError);
+                        });
+
+                        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                        const frameDataUrl = canvas.toDataURL('image/jpeg', 0.8);
+                        frames.push({
+                            timestamp: seekTime,
+                            data: frameDataUrl.split(',')[1]
+                        });
+                    } catch (e) {
+                         console.warn(`Frame extraction skipped for time ${seekTime}:`, e);
+                         // If we time out, we just continue. If all fail, we handle it below.
+                    }
+                }
+
                 URL.revokeObjectURL(videoUrl);
-                return reject(new Error("Canvas context not available"));
-            }
-
-            const duration = video.duration;
-            // Distribute frames evenly, avoiding the very start and end.
-            const interval = duration / (frameCount + 1);
-
-            for (let i = 1; i <= frameCount; i++) {
-                const seekTime = interval * i;
-                if (seekTime > duration) continue;
                 
-                // Seeking is asynchronous, so we need to wait for it.
-                video.currentTime = seekTime;
-                await new Promise<void>((res, rej) => {
-                    const seekTimeout = setTimeout(() => rej(new Error('Video seek timed out')), 2000);
-                    video.onseeked = () => {
-                        clearTimeout(seekTimeout);
-                        res();
-                    };
-                });
-
-                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-                const frameDataUrl = canvas.toDataURL('image/jpeg', 0.7);
-                frames.push({
-                    timestamp: seekTime,
-                    data: frameDataUrl.split(',')[1]
-                });
+                if (frames.length === 0) {
+                     // Try to grab at least the first frame if seek failed everywhere
+                     try {
+                        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                        const frameDataUrl = canvas.toDataURL('image/jpeg', 0.8);
+                        frames.push({ timestamp: 0, data: frameDataUrl.split(',')[1] });
+                        resolve(frames);
+                     } catch(e) {
+                        reject(new Error("Could not extract any frames from video."));
+                     }
+                } else {
+                    resolve(frames);
+                }
+            } catch (e) {
+                URL.revokeObjectURL(videoUrl);
+                reject(e);
             }
-
-            URL.revokeObjectURL(videoUrl);
-            resolve(frames);
         };
 
         video.onerror = () => {
             URL.revokeObjectURL(videoUrl);
-            reject(new Error("Failed to load video file for frame extraction."));
+            reject(new Error("Failed to load video file."));
         };
     });
 };
@@ -172,592 +228,692 @@ const getPlatformGuidelines = (platform: Platform): string => {
         case Platform.ADOBE_STOCK:
             return `
             ADOBE STOCK MASTER GUIDELINES:
-            1. STRUCTURE: [Subject with Detailed Adjectives] + [Action/Interaction/Symbolism] + [Environment/Context].
-            2. DETAIL: Be extremely descriptive. Mention clothing (e.g., "striped shirt"), physical traits (e.g., "blue shorts"), objects held (e.g., "crossed swords"), and background vibe (e.g., "fiery background").
-            3. STYLE: Describe the style naturally (e.g., "A flat vector illustration of...", "A minimalistic logo of..."). Do NOT append a list of tags like "vector art, logo design" at the end of the sentence.
-            4. TONE: Commercial, literal, and SEO-focused.
+            1. **SUBJECT-FIRST STRUCTURE**: Start with the main subject.
+            2. **EXPANDED DETAILS**: Include lighting, mood, style, and context to maximize title length.
+            3. **FORMAT**: [Subject] + [Action] + [Context] + [Style/Tech Specs].
             `;
         case Platform.SHUTTERSTOCK:
             return `
             SHUTTERSTOCK GUIDELINES:
-            1. Create a rich, descriptive sentence.
-            2. Include: Subject, Action, Context, and Style.
-            3. Example: "A stylized bird wearing a striped shirt and blue shorts standing on one leg."
+            1. **NATURAL SENTENCE**: Write a long, descriptive sentence.
+            2. **NO TRADEMARKS**: Use generic terms (e.g., "Smartphone" vs "iPhone").
             `;
         default:
-            return "Create a commercially appealing title as a descriptive sentence. Be literal and detailed.";
+            return `
+            GENERAL GUIDELINES:
+            1. Descriptive, accurate, and long.
+            2. Focus on visual content: Subject, Action, Context, Lighting, Mood.
+            `;
     }
-}
-
-const SUPPORTED_MIME_TYPES_FOR_VISUAL_ANALYSIS = [
-    'image/jpeg',
-    'image/png',
-    'image/webp',
-    'image/heic',
-    'image/heif',
-    'image/svg+xml', // Supported via conversion to PNG
-    'video/mp4', // Supported via frame extraction
-    'video/quicktime', // Supported via frame extraction
-    'video/mov', // Supported via frame extraction
-    'video/x-msvideo',
-    'video/x-matroska',
-    'video/webm',
-    'video/x-m4v'
-];
-
-const getAssetTypeInfo = (file: File, imageType: ImageType): string => {
-    const fileMime = file.type;
-    const fileName = file.name.toLowerCase();
-
-    if (fileMime.startsWith('video/')) {
-        return "Format: Video Footage.";
-    }
-    if (imageType === ImageType.LOGO) {
-        return "Format: Professional Logo Design. Style: Minimalist, Modern, or Emblematic. Focus on symbolism, shapes, and branding potential.";
-    }
-    if (fileMime === 'image/svg+xml' || fileName.endsWith('.svg') || fileName.endsWith('.eps') || fileName.endsWith('.ai') || imageType === ImageType.VECTOR) {
-        return "Format: Vector Illustration. Style: Flat, Clean, or Isometic.";
-    }
-    return "Format: Photography.";
-}
-
-const extractJson = (text: string): string => {
-    if (!text) return "";
-    let cleanText = text.trim();
-    // Remove markdown code blocks
-    cleanText = cleanText.replace(/```json\s*|```/g, '');
-    
-    const firstOpen = cleanText.indexOf('{');
-    const lastClose = cleanText.lastIndexOf('}');
-    
-    if (firstOpen !== -1 && lastClose !== -1) {
-        return cleanText.substring(firstOpen, lastClose + 1);
-    }
-    return cleanText;
-}
-
-// Main generation function that delegates to the correct provider
-export const generateMetadata = async (
-    processedFile: ProcessedFile,
-    settings: Settings
-): Promise<{ title: string; description: string; keywords: string[] }> => {
-    if (settings.aiProvider === AIProvider.MISTRAL) {
-        return generateMistralMetadata(processedFile, settings);
-    }
-    return generateGeminiMetadata(processedFile, settings);
 };
 
-const getVisualContentParts = async (processedFile: ProcessedFile, provider: AIProvider): Promise<any[]> => {
-    const { file, preview } = processedFile;
-    const fileType = file.type;
-    const hasManualPreview = preview.startsWith('blob:');
+const buildSystemInstruction = (
+    settings: Settings,
+    isVector: boolean | RegExpMatchArray | null,
+    isRaster: boolean,
+    isVideo: boolean
+): string => {
+    const { platform, titleLength, maxKeywords, isolatedWhite, isolatedTransparent, imageType, prefix, suffix, negativeTitleWords, negativeKeywords } = settings;
+    const platformGuidelines = getPlatformGuidelines(platform);
 
-    // Handle video separately to allow for interleaved text/image parts
-    if (!hasManualPreview && fileType.startsWith('video/')) {
-        const frames = await extractFramesFromVideo(file);
-        const videoParts: any[] = [];
+    let currentMaxTitle = titleLength.max;
+    if (platform === Platform.TEMPLATE_MONSTER) {
+        currentMaxTitle = Math.min(currentMaxTitle, 100);
+    }
+    
+    // Adjust max title length guidance to account for prefix/suffix
+    const extrasLength = (prefix?.length || 0) + (suffix?.length || 0) + (prefix ? 1 : 0) + (suffix ? 1 : 0);
+    const effectiveMaxTitle = Math.max(20, currentMaxTitle - extrasLength);
+
+    const titleConstraints = `Title must be strictly LESS THAN ${effectiveMaxTitle} characters but MORE THAN ${titleLength.min} characters.`;
+    
+    // IMPROVED ISOLATION INSTRUCTION
+    const isolationNote = isolatedWhite 
+        ? "CRITICAL: The image is isolated on a white background. Ensure the title reflects this."
+        : isolatedTransparent 
+        ? "CRITICAL: The image is isolated on a transparent background. Ensure the title reflects this."
+        : "";
         
-        // Mistral prefers images then text, or interleaved. We'll add images first.
-        if (provider === AIProvider.MISTRAL) {
-             frames.forEach(frame => {
-                videoParts.push({ type: 'image_url', image_url: { url: `data:image/jpeg;base64,${frame.data}` } });
-             });
-             videoParts.push({ type: 'text', text: "The above are sequential frames from the video footage." });
-        } else { // Gemini
-            for (const frame of frames) {
-                const timestampText = `Frame at ${frame.timestamp.toFixed(2)}s:`;
-                videoParts.push(
-                    { text: timestampText },
-                    { inlineData: { mimeType: 'image/jpeg', data: frame.data } }
-                );
-            }
-        }
-        return videoParts;
-    }
+    const typeNote = imageType !== ImageType.NONE ? `This is a ${imageType}.` : "";
 
-    // --- Fallback for images or videos with manual previews ---
-    let imageDatas: { mimeType: string, data: string }[] = [];
+    const vectorInstruction = (isVector && !isRaster) ? `
+    **VECTOR SPECIFIC**:
+    - Describe the ART STYLE (e.g., Flat, Isometric, Watercolor, Line Art).
+    - If it's a "Set" or "Bundle", describe the variety.
+    ` : "";
 
-    if (hasManualPreview) {
-        // Optimize image size before sending
-        try {
-            const resized = await resizeImage(preview);
-            imageDatas.push(resized);
-        } catch (e) {
-            console.warn("Failed to resize manual preview, falling back to blob extraction (unsafe size).", e);
-            // Fallback to old method only if resize fails
-             const response = await fetch(preview);
-             const blob = await response.blob();
-             const reader = new FileReader();
-             const p = new Promise<{mimeType: string, data: string}>((resolve) => {
-                 reader.onload = () => resolve({mimeType: blob.type, data: (reader.result as string).split(',')[1]});
-                 reader.readAsDataURL(blob);
-             });
-             imageDatas.push(await p);
-        }
-    } else if (fileType === 'image/svg+xml') {
-        const svgDataUrl = await new Promise<string>((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onload = () => resolve(reader.result as string);
-            reader.onerror = error => reject(error);
-            reader.readAsDataURL(file);
-        });
-        const pngBase64 = await convertSvgToPng(svgDataUrl);
-        imageDatas.push({ mimeType: 'image/png', data: pngBase64 });
-    } else if (SUPPORTED_MIME_TYPES_FOR_VISUAL_ANALYSIS.includes(fileType)) {
-        // Use resizeImage for native supported types (jpg, png, etc) via temporary object URL
-        const objectUrl = URL.createObjectURL(file);
-        try {
-             const resized = await resizeImage(objectUrl);
-             imageDatas.push(resized);
-        } catch (e) {
-             console.warn("Failed to resize native image, sending raw.", e);
-             // Fallback
-             const base64EncodedData = await new Promise<string>((resolve, reject) => {
-                const reader = new FileReader();
-                reader.onload = () => resolve((reader.result as string).split(',')[1]);
-                reader.onerror = error => reject(error);
-                reader.readAsDataURL(file);
-             });
-             imageDatas.push({ mimeType: file.type, data: base64EncodedData });
-        } finally {
-            URL.revokeObjectURL(objectUrl);
-        }
-    }
+    const rasterInstruction = isRaster ? `
+    **RASTER/PNG IMAGE SPECIFIC**:
+    - **FORBIDDEN WORDS**: Do NOT use words like "Vector", "Vector Illustration", "EPS", or "Vector File" in the title or description.
+    ` : "";
+
+    const videoInstruction = isVideo ? `
+    **VIDEO SPECIFIC MASTER GUIDELINES**:
+    You are analyzing frames from a stock video clip. Your title MUST describe the movement, camera angle, and action.
     
-    // Convert the collected image data to the provider-specific format
-    if (provider === AIProvider.MISTRAL) {
-        return imageDatas.map(({ mimeType, data }) => ({
-            type: 'image_url',
-            image_url: { url: `data:${mimeType};base64,${data}` },
-        }));
-    } 
-    
-    // Default to Gemini format
-    return imageDatas.map(({ mimeType, data }) => ({
-        inlineData: { mimeType, data }
-    }));
-};
+    1. **Identify Camera Movement**: (e.g., Aerial/Drone, Panning, Tilting, Dolly, Tracking, Static, Zoom).
+    2. **Identify Motion Speed**: (e.g., Slow Motion, Time Lapse, Real-time).
+    3. **Title Structure**: Start with the shot type if distinctive (e.g., "Aerial view of...", "Slow motion shot of...").
+    4. **Detail**: Describe EXACTLY what is moving and how.
+    ` : "";
 
-const buildSystemInstruction = (settings: Settings): string => {
-    const platformGuidelines = getPlatformGuidelines(settings.platform);
+    const negativeTitleInstruction = negativeTitleWords 
+        ? `**FORBIDDEN WORDS IN TITLE**: Do NOT use the following words in the title: ${negativeTitleWords}.` 
+        : "";
     
-    const logoExamples = `
-       - "Elegant black and white fox head logo design, perfect for branding"
-       - "Upgradable logo with a blue ship and shovel, symbolizing progress and innovation"
-       - "Stylized logo with three green leaves and a glowing yellow starburst"
-    `;
-
-    const standardExamples = `
-       - "Skull with horns holding crossed swords in fiery background, dark fantasy art, logo design"
-       - "A stylized bird wearing a striped shirt and blue shorts standing on one leg"
-    `;
-
-    // Calculate approximate word count (heuristic: 1 word ~ 5-6 chars)
-    // Asking for "50 characters" often fails, asking for "10 words" works better.
-    const minWords = Math.ceil(Math.max(10, settings.titleLength.min) / 5);
-    
-    // If the max is short, add strict concise constraint
-    const brevityConstraint = settings.titleLength.max < 120 
-        ? "STRICT: Keep the title CONCISE and SHORT. Do not be verbose." 
+    const negativeKeywordInstruction = negativeKeywords
+        ? `**FORBIDDEN KEYWORDS**: Do NOT include these keywords in the list: ${negativeKeywords}.`
         : "";
 
     return `
-    Role: Elite Stock Photography & Vector Metadata Specialist.
+    You are an expert Stock Media Metadata Specialist.
     
-    Objective: Generate highly descriptive, SEO-optimized titles and keywords that maximize sales.
+    YOUR GOAL: Analyze the media style and content to generate accurate metadata.
     
-    **TITLE GENERATION RULES:**
-    1. **LENGTH CONSTRAINT**: 
-       - Title MUST be at least ${minWords} words long (approx ${settings.titleLength.min} characters).
-       - Maximum length is ${settings.titleLength.max} characters. ${brevityConstraint}
-       - If visual details are sparse, elaborate on textures, lighting, and mood to meet the MINIMUM length.
-    2. **GUIDELINES**: ${platformGuidelines}
-    3. **EXAMPLES (GOOD)**:
-       ${settings.imageType === ImageType.LOGO ? logoExamples : standardExamples}
-    4. **BEHAVIOR**: Describe the subject's accessories, colors, and the exact action. Integrate style descriptions naturally (e.g. "A flat vector illustration of..."). Do NOT append a list of tags at the end.
-    5. **ISOLATION**: Do NOT include "Isolated on white" or "Transparent background" in the generated title. (This is added programmatically based on user settings).
-    6. **PROHIBITED**: Do not start with "A picture of", "Vector of". Start directly with the subject.
+    CRITICAL VISUAL STYLE ANALYSIS:
+    Determine the specific art style of the image and incorporate it into the title:
+    1. **Realistic Photography**: High-quality photo, realistic textures. No need to label "photo of", just describe the scene.
+    2. **3D Render**: CGI, 3D modeling, plastic or smooth textures. Title MUST start with or contain "3D render of...".
+    3. **Silhouette**: Dark shape against a light background. Title MUST start with "Silhouette of...".
+    4. **Vector/Flat**: Clean lines, solid colors, scalable style. Title MUST contain "Vector illustration" or "Flat design".
+    5. **Logo/Icon**: Simple, symbolic, abstract. Title MUST contain "Logo design" or "Icon of".
+    6. **Watercolor/Painting**: Artistic brush strokes. Title MUST contain "Watercolor painting of" or "Digital painting".
+    7. **Video Analysis**: Refer to the Video Specific Guidelines below.
+
+    ${platformGuidelines}
     
-    **KEYWORD RULES:**
-    1. Generate EXACTLY ${settings.maxKeywords} keywords. This is a strict count.
-    2. Single words only. Split phrases (e.g., "red-car" -> "red", "car").
-    3. Include subject, action, style, mood, and specific object keywords.
-    
-    Output strictly JSON.
+    RULES:
+    1. ${titleConstraints}
+    2. ${isolationNote}
+    3. ${typeNote}
+    4. ${videoInstruction}
+    5. ${rasterInstruction}
+    6. ${negativeTitleInstruction}
+    7. ${negativeKeywordInstruction}
+    8. Generate ${maxKeywords} STRICTLY SINGLE-WORD keywords. No phrases. Split any multi-word concepts (e.g., "red car" -> "red", "car").
+    9. **FORBIDDEN PHRASE**: NEVER use the phrase "digital illustration displaying". Use "digital illustration of" or simply "digital illustration" instead.
+    ${vectorInstruction}
+
+    OUTPUT JSON ONLY: { "title": "...", "description": "...", "keywords": [...] }
     `;
 };
 
-const buildPrompt = (processedFile: ProcessedFile, settings: Settings, provider: AIProvider) => {
-    const assetTypeInfo = getAssetTypeInfo(processedFile.file, settings.imageType);
-    
-    // Explicitly tell the AI NOT to add isolation text, we will add it manually if needed
-    const isolationInstr = "Do NOT add 'Isolated on white' or 'Transparent background' to the title. We will add it programmatically.";
-    
-    const minWords = Math.ceil(Math.max(10, settings.titleLength.min) / 5);
-    const brevityConstraint = settings.titleLength.max < 120 
-        ? "Keep it CONCISE. Do not exceed limit." 
-        : "Be DESCRIPTIVE.";
-
-    const visualPrompt = `
-    Analyze this ${assetTypeInfo}.
-    
-    Task: Generate a high-converting Title and Keywords for ${settings.platform}.
-    
-    CRITICAL TITLE INSTRUCTIONS:
-    - **LENGTH**: The title MUST be at least ${minWords} words long (Min ${settings.titleLength.min} chars).
-    - ${brevityConstraint}
-    - Describe the SUBJECT in detail (appearance, clothing, items held).
-    - Describe the ACTION or POSE.
-    - Describe the BACKGROUND or CONTEXT.
-    - Describe the ART STYLE (e.g., "dark fantasy art", "sticker design", "flat vector", "logo design").
-    - ${isolationInstr}
-    
-    Filename: ${processedFile.file.name}
-    Prefix: ${settings.prefix}
-    Suffix: ${settings.suffix}
-    `;
-
-    if (provider === AIProvider.MISTRAL) {
-         return `
-        ${visualPrompt}
-        
-        Output JSON: { "title": "...", "keywords": ["..."] }
-        `;
+const sanitizeMetadata = (json: any, maxTitleLength: number, isolatedWhite: boolean, isolatedTransparent: boolean): any => {
+    // 1. Sanitize Keywords
+    if (json.keywords && Array.isArray(json.keywords)) {
+        const uniqueWords = new Set<string>();
+        json.keywords.forEach((k: string) => {
+            // Split by whitespace, commas, underscores, or hyphens to ensure single words
+            const words = k.trim().split(/[\s,_,-]+/);
+            words.forEach(w => {
+                const clean = w.replace(/^[^a-zA-Z0-9]+|[^a-zA-Z0-9]+$/g, '');
+                if (clean.length > 1) uniqueWords.add(clean.toLowerCase());
+            });
+        });
+        json.keywords = Array.from(uniqueWords);
     }
 
-    return visualPrompt;
-};
-
-const normalizeMetadata = (metadata: any, settings: Settings): { title: string; description: string; keywords: string[] } => {
-    const rawTitle = metadata.title || metadata.Title || '';
-    const rawDesc = metadata.description || metadata.Description || '';
-    const rawKeywords = metadata.keywords || metadata.Keywords || [];
-
-    let title = (rawTitle || '').trim();
-    
-    // 1. Clean prefixes
-    title = title.replace(/^(A |An |The |Image of |Photo of |Vector of )/i, "");
-
-    // 2. Remove hyphens as requested
-    title = title.replace(/-/g, " ");
-
-    // 3. GLOBAL CLEANUP: Aggressively strip ANY AI-generated isolation text.
-    title = title.replace(/\bisolated on (a\s+)?(white|transparent)(\s+background)?\b/gi, " ");
-    title = title.replace(/\bon (a\s+)?(white|transparent)(\s+background)?\b/gi, " ");
-
-    // 4. CLEANUP STYLE TAGS AT END
-    const tagsToRemove = ["vector art", "logo design", "illustration", "vector illustration", "flat design"];
-    for (const tag of tagsToRemove) {
-        const regex = new RegExp(`[,\\s]+${tag}\\.?$`, 'gi');
-        title = title.replace(regex, "");
-    }
-
-    // Clean up resulting punctuation mess
-    title = title.replace(/\s*,\s*,/g, ","); // double commas
-    title = title.replace(/\s+/g, ' ').trim(); // double spaces
-    title = title.replace(/,\s*$/, ""); // trailing comma
-
-    // --- HARD LENGTH ENFORCEMENT ---
-    // Calculate how much space we have left after we add mandatory suffixes/prefixes
-    let reservedLength = 0;
-    let isolationSuffix = "";
-    
-    if (settings.isolatedWhite) {
-        isolationSuffix = ", isolated on white background";
-        reservedLength += isolationSuffix.length;
-    } else if (settings.isolatedTransparent) {
-        isolationSuffix = ", isolated on transparent background";
-        reservedLength += isolationSuffix.length;
-    }
-
-    if (settings.prefix) reservedLength += (settings.prefix.length + 1); // +1 for space
-    if (settings.suffix) reservedLength += (settings.suffix.length + 1);
-
-    // Calculate max allowed length for the AI core text
-    const maxCoreLength = Math.max(10, settings.titleLength.max - reservedLength);
-
-    // If core title is too long, truncate it intelligently
-    if (title.length > maxCoreLength) {
-        // Cut to limit
-        let truncated = title.substring(0, maxCoreLength);
-        // Try to walk back to last space to avoid cutting a word in half
-        const lastSpace = truncated.lastIndexOf(' ');
-        if (lastSpace > 0) {
-            truncated = truncated.substring(0, lastSpace);
-        }
-        title = truncated;
-    }
-
-    // 5. Force Append Isolation Suffix
-    title = title + isolationSuffix;
-    
-    // 6. Apply Prefix/Suffix
-    if (settings.prefix && !title.toLowerCase().startsWith(settings.prefix.toLowerCase())) {
-        title = `${settings.prefix} ${title}`;
-    }
-    if (settings.suffix && !title.toLowerCase().endsWith(settings.suffix.toLowerCase())) {
-        title = `${title} ${settings.suffix}`;
-    }
-
-    // Capitalize
-    if (title.length > 0) {
-        title = title.charAt(0).toUpperCase() + title.slice(1);
-    }
-
-    metadata.title = title;
-    // Force Description to match Title by default
-    metadata.description = title; 
-    
-    const keywordsInput = Array.isArray(rawKeywords) 
-        ? rawKeywords.join(',') 
-        : rawKeywords || '';
-
-    let keywordsArray = keywordsInput.split(',').map((k: string) => k.trim().toLowerCase()).filter(Boolean);
-    
-    // --- STRICT SINGLE WORD ENFORCEMENT ---
-    const stopWords = new Set(['a', 'an', 'the', 'of', 'in', 'on', 'at', 'to', 'for', 'with', 'by', 'and', 'or', 'but', 'is', 'are', 'illustration', 'vector', 'image', 'background']);
-    
-    keywordsArray = keywordsArray.flatMap((k: string) => {
-        return k.split(/[\s\-_]+/);
-    }).map(k => k.replace(/[^\w]/g, '')) 
-      .filter((k: string) => k.length > 2 && !stopWords.has(k) && !/^\d+$/.test(k)); 
-
-    metadata.keywords = [...new Set(keywordsArray)];
-    return metadata;
-};
-
-const parseApiError = (error: any, apiKey: string, provider: 'Gemini' | 'Mistral'): string => {
-    const message = String(error?.message || error).toLowerCase();
-    const keyIdentifier = `(key ending in ...${apiKey.slice(-4)})`;
-
-    if (message.includes('(400)')) {
-        return `Bad Request ${keyIdentifier}: The AI model rejected the request.`;
-    }
-    if (message.includes('(401)') || message.includes('(403)')) {
-        return `Invalid API Key ${keyIdentifier}`;
-    }
-    if (message.includes('(429)') || message.includes('quota') || message.includes('resource_exhausted')) {
-        return `Quota Exceeded ${keyIdentifier}`;
-    }
-    if (message.includes('(500)') || message.includes('(503)')) {
-        return `Server Error ${keyIdentifier}`;
-    }
-    if (message.includes('failed to fetch')) {
-        return `Network Error`;
-    }
-    if (message.includes('finishreason: safety') || message.includes('blocked: safety')) {
-         return `Content Blocked ${keyIdentifier}`;
-    }
-
-    const rawMessage = error instanceof Error ? error.message : 'Unknown error';
-    return `Error ${keyIdentifier}: ${rawMessage}`;
-};
-
-const isRetryableApiError = (error: any): boolean => {
-    const message = String(error?.message || error).toLowerCase();
-    // 429 (Quota) is NOT retryable for the SAME KEY. We want to fail fast to switch keys.
-    if (message.includes('429') || message.includes('quota') || message.includes('resource_exhausted')) return false;
-    
-    // Other 4xx are also not retryable
-    if (/\(4\d\d\)/.test(message)) return false;
-    
-    // 5xx errors are retryable
-    if (message.includes('500') || message.includes('503') || message.includes('internal server error')) return true;
-    if (message.includes('overloaded')) return true;
-    
-    // Network errors are retryable
-    if (message.includes('failed to fetch')) return true;
-    if (message.includes('unexpected end of json input') || message.includes('json')) return true;
-    
-    return false;
-};
-
-// MISTRAL IMPLEMENTATION
-const generateMistralMetadata = async (
-    processedFile: ProcessedFile,
-    settings: Settings
-): Promise<{ title: string; description: string; keywords: string[] }> => {
-    const { mistralApiKeys } = settings;
-    const keysToUse = [...new Set([...mistralApiKeys, ...BACKUP_MISTRAL_KEYS])];
-    const availableKeys = (keysToUse && keysToUse.length > 0) ? keysToUse : BACKUP_MISTRAL_KEYS;
-
-    const errors: string[] = [];
-    const shuffledKeys = [...availableKeys].sort(() => Math.random() - 0.5);
-
-    for (const apiKey of shuffledKeys) {
-        try {
-            const systemPrompt = buildSystemInstruction(settings);
-
-            const userPromptText = buildPrompt(processedFile, settings, AIProvider.MISTRAL);
-
-            const messages: any[] = [
-                { role: 'system', content: systemPrompt }
-            ];
-
-            const userContent: any[] = [
-                { type: 'text', text: userPromptText }
-            ];
-
-            let visualParts: any[] = [];
-            try {
-                visualParts = await getVisualContentParts(processedFile, AIProvider.MISTRAL);
-            } catch(e) {
-                console.error("Failed to process visual content for Mistral:", e);
-            }
-
-            if (visualParts.length > 0) {
-                 userContent.push(...visualParts);
-            }
-
-            messages.push({ role: 'user', content: userContent });
-
-            const apiCall = async () => {
-                const response = await fetch('https://api.mistral.ai/v1/chat/completions', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${apiKey}`,
-                    },
-                    body: JSON.stringify({
-                        model: 'pixtral-12b-2409', 
-                        messages: messages,
-                        temperature: 0.1, 
-                        max_tokens: 2000, 
-                        response_format: { type: 'json_object' } 
-                    }),
-                });
-
-                const text = await response.text();
-                if (!response.ok) throw new Error(text);
-                if (!text) throw new Error("Empty response");
-
-                try {
-                    return JSON.parse(text);
-                } catch(e) {
-                    const cleaned = extractJson(text);
-                    return JSON.parse(cleaned);
-                }
-            };
-
-            const responseData = await retryWithBackoff(apiCall, 3, 2000, isRetryableApiError);
-            const content = responseData.choices[0]?.message?.content;
-            const jsonString = extractJson(content);
-            const metadata = JSON.parse(jsonString);
-
-            return normalizeMetadata(metadata, settings);
-
-        } catch (e) {
-            console.error(`Mistral error`, e);
-            errors.push(parseApiError(e, apiKey, 'Mistral'));
-        }
-    }
-    throw new Error(`All Mistral API keys failed.`);
-};
-
-// GEMINI IMPLEMENTATION
-const generateGeminiMetadata = async (
-    processedFile: ProcessedFile,
-    settings: Settings
-): Promise<{ title: string; description: string; keywords: string[] }> => {
-    const { geminiApiKeys, geminiModel } = settings;
-    
-    // Strategy: Prioritize User Keys, then Backup Keys.
-    // This ensures if a user provides a working key, it's used immediately without waiting for exhausted public keys.
-    const userKeys = [...new Set(geminiApiKeys)].filter(k => k.trim().length > 0);
-    const backupKeys = [...new Set(BACKUP_API_KEYS)];
-    
-    // Shuffle arrays independently to distribute load but keep priority groups
-    const shuffledUserKeys = userKeys.sort(() => Math.random() - 0.5);
-    const shuffledBackupKeys = backupKeys.sort(() => Math.random() - 0.5);
-    
-    const allKeysOrdered = [...shuffledUserKeys, ...shuffledBackupKeys];
-
-    if (allKeysOrdered.length === 0) {
-        throw new Error("No API keys available.");
-    }
-
-    const prompt = buildPrompt(processedFile, settings, AIProvider.GEMINI);
-    const systemInstruction = buildSystemInstruction(settings);
-    const isAdobeStock = settings.platform === Platform.ADOBE_STOCK;
-
-    const responseSchema = { 
-        type: Type.OBJECT, 
-        properties: {
-            title: { type: Type.STRING },
-            keywords: { type: Type.STRING },
-            ...(isAdobeStock ? {} : { description: { type: Type.STRING } })
-        }, 
-        required: ['title', 'keywords'],
+    // 2. Helper to remove forbidden phrases
+    const cleanText = (text: string) => {
+        return text.replace(/digital illustration displaying/gi, "digital illustration of");
     };
-    
-    const errors: string[] = [];
-    const fallbackChain = [GeminiModel.FLASH_LITE, GeminiModel.PRO, GeminiModel.FLASH_2_0, GeminiModel.FLASH];
-    const modelsToAttempt: string[] = [];
-    
-    if (fallbackChain.includes(geminiModel)) {
-        modelsToAttempt.push(geminiModel);
-        fallbackChain.forEach(m => { if (m !== geminiModel) modelsToAttempt.push(m); });
-    } else {
-        modelsToAttempt.push(geminiModel, ...fallbackChain);
+
+    // 3. Sanitize Title & Force Isolation logic
+    if (json.title && typeof json.title === 'string') {
+        let title = cleanText(json.title.trim());
+
+        // A. Determine mandatory suffix
+        let mandatorySuffix = "";
+        if (isolatedWhite) mandatorySuffix = "isolated on white background";
+        else if (isolatedTransparent) mandatorySuffix = "isolated on transparent background";
+
+        // B. Remove existing suffix occurrences AND partials to avoid duplication/stuttering
+        if (mandatorySuffix) {
+             // AGGRESSIVE CLEANUP: Remove common "isolated" stuttering or descriptive phrases
+             // created by AI before appending the mandatory suffix.
+             
+             // List of regex patterns to strip out
+             const backgroundPhrases = [
+                /isolated\s+isolated/gi, // Double stutter
+                /isolated\s+on\s+(?:a\s+)?(?:clean\s+)?(?:white|transparent)(?:\s+background)?/gi,
+                /isolated\s+against\s+(?:a\s+)?(?:white|transparent)(?:\s+background)?/gi,
+                /(?:on|against)\s+(?:a\s+)?(?:clean\s+)?(?:white|transparent)(?:\s+background)?/gi,
+                /(?:on|against)\s+(?:a\s+)?(?:white|transparent)/gi,
+                /\bisolated\b/gi, // Standalone "isolated"
+                /\bcut\s*out\b/gi,
+                /\bstudio\s*shot\b/gi,
+                /\bclean\s*white\b/gi,
+                /\bwhite\s*background\b/gi
+             ];
+
+             backgroundPhrases.forEach(regex => {
+                 title = title.replace(regex, ' ');
+             });
+
+             // Clean up resulting messy punctuation/spaces
+             title = title.replace(/\s{2,}/g, ' ').trim();
+             title = title.replace(/[.,;:\-\s]+$/, '').trim();
+        }
+
+        // C. Truncate title to fit Suffix
+        // Available space = Max - Suffix Length - 1 (space)
+        const availableSpace = mandatorySuffix ? (maxTitleLength - mandatorySuffix.length - 1) : maxTitleLength;
+        
+        if (title.length > availableSpace) {
+             let truncated = title.substring(0, availableSpace);
+             const lastSpace = truncated.lastIndexOf(' ');
+             if (lastSpace > availableSpace * 0.7) { 
+                 truncated = truncated.substring(0, lastSpace);
+             }
+             title = truncated;
+        }
+
+        // D. Append Suffix
+        if (mandatorySuffix) {
+            title = `${title} ${mandatorySuffix}`;
+        }
+
+        json.title = title;
     }
 
-    for (const currentModel of modelsToAttempt) {
-        for (const key of allKeysOrdered) {
+    // 4. Sanitize Description
+    if (json.description && typeof json.description === 'string') {
+        json.description = cleanText(json.description.trim());
+    }
+
+    return json;
+};
+
+const getErrorMessage = (e: any): string => {
+    if (typeof e === 'string') return e;
+    if (e?.message) return e.message;
+    try { return JSON.stringify(e); } catch { return 'Unknown Error'; }
+};
+
+export const generateMetadata = async (processedFile: ProcessedFile, settings: Settings) => {
+    const { file, preview } = processedFile;
+    const { platform, titleLength, descriptionLength, maxKeywords, isolatedWhite, isolatedTransparent, imageType, geminiApiKeys, mistralApiKeys, openRouterApiKeys, aiProvider, geminiModel, openRouterModel, prefix, suffix, negativeKeywords } = settings;
+
+    // --- 1. PREPARE DATA ---
+    let parts: any[] = [];
+    const maxDim = 800; // Unify max dimension to 800 for both providers to save bandwidth/payload size
+    const isPng = file.type === 'image/png' || file.name.toLowerCase().endsWith('.png');
+    const isJpeg = file.type === 'image/jpeg' || file.name.toLowerCase().endsWith('.jpg') || file.name.toLowerCase().endsWith('.jpeg');
+    const isRaster = isPng || isJpeg;
+    const outputType = isPng ? 'image/png' : 'image/jpeg';
+
+    try {
+        if (file.type.startsWith('video/')) {
+            try {
+                // We ask for more frames initially, but may downsample later for Mistral/OpenRouter
+                const frames = await extractFramesFromVideo(file, 8); 
+                parts = frames.map(frame => ({ inlineData: { mimeType: 'image/jpeg', data: frame.data } }));
+            } catch (e) {
+                console.error("Video processing failed:", e);
+                throw new Error("Video processing failed. " + getErrorMessage(e));
+            }
+        } else if (file.name.match(/\.(eps|ai|pdf)$/i)) {
+            if (preview && !preview.startsWith('blob:')) {
+                 try {
+                    const response = await fetch(preview);
+                    const blob = await response.blob();
+                    const { data, mimeType } = await resizeImage(URL.createObjectURL(blob), maxDim, 'image/jpeg');
+                     parts = [{ inlineData: { mimeType, data } }];
+                 } catch(e) { throw new Error("Failed to process vector preview."); }
+            } else if (file.type === 'application/pdf') {
+                 const getBase64 = (f: File) => new Promise<string>((res) => { const r = new FileReader(); r.onload=()=>res((r.result as string).split(',')[1]); r.readAsDataURL(f); });
+                 const b64 = await getBase64(file);
+                 parts = [{ inlineData: { mimeType: 'application/pdf', data: b64 } }];
+            } else {
+                 if (preview) {
+                     const { data, mimeType } = await resizeImage(preview, maxDim, 'image/jpeg');
+                     parts = [{ inlineData: { mimeType, data } }];
+                 } else {
+                      throw new Error("Vector file requires a companion JPG/PNG preview.");
+                 }
+            }
+        } else if (file.type === 'image/svg+xml') {
+            const getBase64 = (f: File) => new Promise<string>((res) => { const r = new FileReader(); r.onload=()=>res((r.result as string).split(',')[1]); r.readAsDataURL(f); });
+            const b64 = await getBase64(file);
+            const pngBase64 = await convertSvgToPng(`data:image/svg+xml;base64,${b64}`);
+            parts = [{ inlineData: { mimeType: 'image/png', data: pngBase64 } }];
+        } else {
+            const { mimeType, data } = await resizeImage(preview, maxDim, outputType);
+            parts = [{ inlineData: { mimeType, data } }];
+        }
+    } catch (e) {
+        throw new Error(`Preprocessing failed: ${getErrorMessage(e)}`);
+    }
+
+    // --- 2. PROMPT & HELPERS ---
+    const isVectorFile = file.name.match(/\.(eps|ai|svg|pdf)$/i) !== null;
+    const isVectorMode = imageType === ImageType.VECTOR || imageType === ImageType.LOGO;
+    const enableVectorPrompt = (isVectorFile || isVectorMode);
+    
+    // Determine isVideo for prompt customization
+    const isVideo = file.type.startsWith('video/');
+
+    const systemPrompt = buildSystemInstruction(settings, enableVectorPrompt, isRaster, isVideo);
+    let currentMaxTitle = titleLength.max;
+    if (platform === Platform.TEMPLATE_MONSTER) currentMaxTitle = Math.min(currentMaxTitle, 100);
+
+    const enforceIsolationKeywords = (json: any) => {
+        if (!json.keywords) json.keywords = [];
+        let required: string[] = [];
+        if (isolatedWhite) required = ['isolated', 'white', 'background'];
+        else if (isolatedTransparent) required = ['isolated', 'transparent', 'background'];
+        required.forEach(req => {
+            if (!json.keywords.includes(req)) json.keywords.push(req);
+        });
+        return json;
+    };
+
+    const applyModifiers = (json: any) => {
+        if (json.title) {
+            let t = json.title;
+            if (prefix && prefix.trim()) t = `${prefix.trim()} ${t}`;
+            if (suffix && suffix.trim()) t = `${t} ${suffix.trim()}`;
+            json.title = t;
+        }
+        if (json.keywords && negativeKeywords) {
+            const negs = negativeKeywords.split(/[,;]+/).map(s => s.trim().toLowerCase()).filter(Boolean);
+            if (negs.length > 0) {
+                json.keywords = json.keywords.filter((k: string) => !negs.includes(k.toLowerCase()));
+            }
+        }
+        return json;
+    };
+
+    const applyIsolationCasing = (json: any) => {
+        if (json.title) {
+            if (isolatedTransparent) {
+                json.title = json.title.replace(/isolated on (a\s+)?transparent background/gi, (match: string) => match.toLowerCase());
+            } else if (isolatedWhite) {
+                json.title = json.title.replace(/isolated on (a\s+)?white background/gi, (match: string) => match.toLowerCase());
+            }
+            if (json.title.length > 0) {
+                json.title = json.title.charAt(0).toUpperCase() + json.title.slice(1);
+            }
+        }
+        return json;
+    };
+
+    const processResponseJSON = (json: any) => {
+        json = enforceIsolationKeywords(json);
+        json = applyModifiers(json);
+        // Note: sanitizeMetadata now handles the mandatory appending of isolation phrases
+        json = sanitizeMetadata(json, currentMaxTitle, isolatedWhite, isolatedTransparent);
+        json = applyIsolationCasing(json);
+        return json;
+    };
+
+    // --- 3. EXECUTION WITH ROTATION ---
+    const callGemini = async () => {
+        const validKeys = geminiApiKeys.filter(k => k?.trim().length > 0);
+        if (!validKeys.length) throw new Error("No Gemini API Key found.");
+        
+        // Try keys starting from global index
+        const attempts = validKeys.length;
+        for (let i = 0; i < attempts; i++) {
+            const keyIndex = (globalGeminiKeyIndex + i) % validKeys.length;
+            const key = validKeys[keyIndex];
+            
             try {
                 const ai = new GoogleGenAI({ apiKey: key });
-                const contentParts: any[] = [];
+                const modelName = geminiModel || GeminiModel.FLASH;
                 
-                let visualParts: any[] = [];
-                 try {
-                    visualParts = await getVisualContentParts(processedFile, AIProvider.GEMINI);
-                } catch(e) {}
-
-                let finalPrompt = prompt;
-                if (visualParts.length > 0) {
-                     contentParts.push(...visualParts);
-                } else {
-                     const canProcessVisually = SUPPORTED_MIME_TYPES_FOR_VISUAL_ANALYSIS.includes(processedFile.file.type) || processedFile.preview.startsWith('blob:');
-                     if (canProcessVisually) {
-                        finalPrompt = buildPrompt({ ...processedFile, preview: '' }, settings, AIProvider.GEMINI);
-                    }
-                }
-                contentParts.push({ text: finalPrompt });
-                
-                const apiCall = () => ai.models.generateContent({
-                    model: currentModel,
-                    contents: { parts: contentParts },
-                    config: { 
-                        responseMimeType: 'application/json', 
-                        responseSchema: responseSchema,
-                        systemInstruction: systemInstruction,
-                        temperature: 0.2, 
+                const response: GenerateContentResponse = await ai.models.generateContent({
+                    model: modelName,
+                    contents: {
+                        role: 'user',
+                        parts: [...parts, { text: systemPrompt + "\n\nProvide the JSON response:" }]
+                    },
+                    config: {
+                        responseMimeType: "application/json",
+                        temperature: 0.7,
+                        topP: 0.95,
+                        topK: 40,
+                        responseSchema: {
+                            type: Type.OBJECT,
+                            properties: {
+                                title: { type: Type.STRING },
+                                description: { type: Type.STRING },
+                                keywords: { type: Type.ARRAY, items: { type: Type.STRING } }
+                            },
+                            required: ["title", "description", "keywords"]
+                        }
                     }
                 });
 
-                // NOTE: We rely on isRetryableApiError to return FALSE for Quota errors.
-                // This ensures we don't retry the same exhausted key in this loop, but fail fast to the next key.
-                const response = await retryWithBackoff(apiCall, 1, 500, isRetryableApiError) as GenerateContentResponse;
+                const text = response.text;
+                if (!text) throw new Error("Empty response from Gemini");
+                let json = parseJSONSafely(text);
                 
-                if (!response.text) throw new Error("Empty response from AI");
-                const metadata = JSON.parse(response.text);
-                return normalizeMetadata(metadata, settings);
+                // Success: Update global index for next call to distribute load
+                globalGeminiKeyIndex = (keyIndex + 1) % validKeys.length;
+                return processResponseJSON(json);
 
-            } catch (e) {
-                const message = String(e?.message || e).toLowerCase();
-                // If it's a quota error, we just log and continue to the next KEY immediately.
-                // If it's a model specific error (e.g. not found), we might continue to next MODEL after keys.
-                
-                // Only delay if it's a rate limit to respect server health, but switch key immediately.
-                if (message.includes('429')) {
-                     // console.warn(`Key ...${key.slice(-4)} exhausted.`);
+            } catch (e: any) {
+                const msg = getErrorMessage(e).toLowerCase();
+                // If 429 or quota, rotate to next key immediately
+                if (msg.includes('429') || msg.includes('quota') || msg.includes('resource has been exhausted')) {
+                    console.warn(`Gemini key ${keyIndex} exhausted, rotating...`);
+                    continue; // Loop continues to next key
                 }
-                errors.push(`[${currentModel}] ${parseApiError(e, key, 'Gemini')}`);
+                throw e; // Other errors are fatal for this attempt
             }
         }
-    }
-    
-    // If we reach here, all keys for all models failed.
-    const uniqueErrors = [...new Set(errors)].slice(0, 3);
-    throw new Error(`Generation failed. ${uniqueErrors.join(' | ')}`);
+        throw new Error("All Gemini keys exhausted/rate-limited.");
+    };
+
+    const callMistral = async () => {
+        if (!parts || parts.length === 0) throw new Error("No image data available for Mistral.");
+        const validKeys = mistralApiKeys.filter(k => k?.trim().length > 0);
+        if (!validKeys.length) throw new Error("No Mistral API Key found.");
+        
+        // LIMIT FRAMES FOR MISTRAL TO PREVENT 400 ERROR (PAYLOAD TOO LARGE)
+        // If we have many frames (e.g. from a video), downsample to 4 evenly spaced frames.
+        let effectiveParts = parts;
+        if (parts.length > 4) {
+             const maxFrames = 4;
+             effectiveParts = [];
+             // Calculate indices: 0, 1/3, 2/3, 1 (approximately)
+             const step = (parts.length - 1) / (maxFrames - 1);
+             for (let i = 0; i < maxFrames; i++) {
+                 effectiveParts.push(parts[Math.round(i * step)]);
+             }
+             // Deduplicate just in case
+             effectiveParts = Array.from(new Set(effectiveParts));
+        }
+
+        // Prepare content array for Pixtral (multi-image support)
+        const messagesContent: any[] = [{ type: "text", text: "" }];
+        effectiveParts.forEach(p => {
+            const url = `data:${p.inlineData.mimeType};base64,${p.inlineData.data}`;
+            messagesContent.push({ type: "image_url", image_url: { url } });
+        });
+        
+        const isVideoInput = parts.length > 1;
+
+        // Specialized Prompt to fix "wrong title" issues
+        const mistralPrompt = `
+        Role: Senior Stock Media Metadata Specialist.
+        
+        ${systemPrompt}
+
+        ### CRITICAL INSTRUCTION: ACCURATE FILE TYPE ANALYSIS
+        You must strictly adhere to the visual style of the asset provided.
+
+        1. **VECTORS & ILLUSTRATIONS**:
+           - If the image is a drawing, graphic, or ends in .eps/.ai: Title MUST contain "Vector illustration" or "Flat design".
+           - Do not treat vectors as "photos".
+
+        2. **SILHOUETTES vs BLACK OBJECTS**:
+           - **Silhouette**: ONLY use "Silhouette of..." if the subject is a dark shape with NO internal detail/texture against a light background.
+           - **Black Object**: If it is a black object (like a tire, chair, electronic) on white where texture is visible, DO NOT call it a silhouette. Just describe the object (e.g., "Black leather beanbag chair...").
+
+        3. **LOGOS & ICONS**:
+           - If abstract or symbolic: Title MUST start with "Logo design" or "Icon of".
+
+        4. **VIDEOS**:
+           - Describe the MOTION (e.g., "Slow motion", "Time lapse", "Panning").
+           - Structure: "[Motion Type] of [Subject]..."
+
+        5. **REALISTIC IMAGES**:
+           - Describe lighting, texture, and mood. 
+           - Use "3D render" if it looks CGI.
+        
+        **CRITICAL RULE FOR ISOLATION**:
+        - If the background is plain white/transparent, focus on the SUBJECT details (material, texture, lighting). 
+        - DO NOT include "isolated on white background" in your output title. The system adds this automatically.
+
+        **TITLE FORMULA**: 
+        [Style/Type] + [Adjective] + [Subject] + [Action/Texture] + [Background (if not isolated)]
+
+        Output ONLY JSON.
+        `;
+        
+        // Inject prompt into content
+        messagesContent[0].text = mistralPrompt;
+
+        const payload = {
+            model: "pixtral-12b-2409", 
+            messages: [
+                {
+                    role: "user",
+                    content: messagesContent
+                }
+            ],
+            temperature: 0.7, 
+            response_format: { type: "json_object" }
+        };
+
+        const attempts = validKeys.length;
+        for (let i = 0; i < attempts; i++) {
+             const keyIndex = (globalMistralKeyIndex + i) % validKeys.length;
+             const key = validKeys[keyIndex];
+
+             const controller = new AbortController();
+             const timeoutId = setTimeout(() => controller.abort(), 90000); // Increased timeout significantly
+
+             try {
+                const res = await fetch("https://api.mistral.ai/v1/chat/completions", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${key}` },
+                    body: JSON.stringify(payload),
+                    signal: controller.signal
+                });
+                
+                if (!res.ok) {
+                     let errorDetail = "";
+                     try { errorDetail = await res.text(); } catch(e) {}
+                     const status = res.status;
+
+                     if (status === 401) {
+                        // Invalid key - definitely rotate
+                         console.warn(`Mistral Key ${keyIndex} Invalid (401).`);
+                         continue;
+                     }
+
+                     if (status === 429) {
+                          console.warn(`Mistral key ${keyIndex} limited (429), rotating...`);
+                          continue; // Rotate key
+                     }
+                     
+                     // Handle 500s and 400s by rotating
+                     if (status >= 500 || status === 400) {
+                         console.warn(`Mistral Error (${status}) with key ${keyIndex}. Rotating... Details: ${errorDetail}`);
+                         continue;
+                     }
+                     
+                     // Other errors
+                     throw new Error(`Mistral API Error: ${status} ${res.statusText} - ${errorDetail}`);
+                }
+
+                const data = await res.json();
+                clearTimeout(timeoutId);
+                if (!data.choices?.[0]?.message?.content) throw new Error("Invalid Mistral response structure.");
+
+                let json = parseJSONSafely(data.choices[0].message.content);
+                
+                if (json.title) {
+                    json.title = json.title.replace(/^(Title|Subject):\s*/i, "").trim();
+                    const forbidden = [/with different styles/gi, /shown from different angles/gi, /collection of/gi];
+                    forbidden.forEach(r => json.title = json.title.replace(r, ""));
+                }
+                
+                // Success: Rotate global
+                globalMistralKeyIndex = (keyIndex + 1) % validKeys.length;
+                return processResponseJSON(json);
+
+            } catch (err: any) {
+                clearTimeout(timeoutId);
+                const msg = getErrorMessage(err).toLowerCase();
+                
+                // Catch network errors, aborts, and specific status codes propagated as errors
+                if (err.name === 'AbortError' || 
+                    msg.includes('429') || 
+                    msg.includes('500') || 
+                    msg.includes('502') || 
+                    msg.includes('503') || 
+                    msg.includes('internal server error') ||
+                    msg.includes('400') ||
+                    msg.includes('bad request')) {
+                     continue; // Retry with next key
+                }
+                throw err;
+            }
+        }
+        throw new Error("All Mistral keys failed or timed out.");
+    };
+
+    const callOpenRouter = async () => {
+        if (!parts || parts.length === 0) throw new Error("No image data available for OpenRouter.");
+        const validKeys = openRouterApiKeys.filter(k => k?.trim().length > 0);
+        if (!validKeys.length) throw new Error("No OpenRouter API Key found.");
+
+        let effectiveParts = parts;
+        // Limit frames for payload size if necessary, similar to Mistral
+        if (parts.length > 4) {
+             const maxFrames = 4;
+             effectiveParts = [];
+             const step = (parts.length - 1) / (maxFrames - 1);
+             for (let i = 0; i < maxFrames; i++) {
+                 effectiveParts.push(parts[Math.round(i * step)]);
+             }
+             effectiveParts = Array.from(new Set(effectiveParts));
+        }
+
+        const messagesContent: any[] = [{ type: "text", text: "" }];
+        effectiveParts.forEach(p => {
+            const url = `data:${p.inlineData.mimeType};base64,${p.inlineData.data}`;
+            messagesContent.push({ type: "image_url", image_url: { url } });
+        });
+
+        const isVideoInput = parts.length > 1;
+        const promptText = `
+        Role: Senior Stock Media Metadata Specialist.
+        
+        ${systemPrompt}
+
+        ### CRITICAL INSTRUCTION: ACCURATE FILE TYPE ANALYSIS
+        You must strictly adhere to the visual style of the asset provided.
+
+        1. **VECTORS & ILLUSTRATIONS**:
+           - If the image is a drawing, graphic, or ends in .eps/.ai: Title MUST contain "Vector illustration" or "Flat design".
+           - Do not treat vectors as "photos".
+
+        2. **SILHOUETTES vs BLACK OBJECTS**:
+           - **Silhouette**: ONLY use "Silhouette of..." if the subject is a dark shape with NO internal detail/texture against a light background.
+           - **Black Object**: If it is a black object (like a tire, chair, electronic) on white where texture is visible, DO NOT call it a silhouette. Just describe the object (e.g., "Black leather beanbag chair...").
+
+        3. **LOGOS & ICONS**:
+           - If abstract or symbolic: Title MUST start with "Logo design" or "Icon of".
+
+        4. **VIDEOS**:
+           - Describe the MOTION (e.g., "Slow motion", "Time lapse", "Panning").
+           - Structure: "[Motion Type] of [Subject]..."
+
+        5. **REALISTIC IMAGES**:
+           - Describe lighting, texture, and mood. 
+           - Use "3D render" if it looks CGI.
+        
+        **CRITICAL RULE FOR ISOLATION**:
+        - If the background is plain white/transparent, focus on the SUBJECT details (material, texture, lighting). 
+        - DO NOT include "isolated on white background" in your output title. The system adds this automatically.
+
+        **TITLE FORMULA**: 
+        [Style/Type] + [Adjective] + [Subject] + [Action/Texture] + [Background (if not isolated)]
+
+        Output ONLY JSON.
+        `;
+
+        messagesContent[0].text = promptText;
+
+        const attempts = validKeys.length;
+        for (let i = 0; i < attempts; i++) {
+             const keyIndex = (globalOpenRouterKeyIndex + i) % validKeys.length;
+             const key = validKeys[keyIndex];
+
+             const controller = new AbortController();
+             const timeoutId = setTimeout(() => controller.abort(), 90000);
+
+             try {
+                const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+                    method: "POST",
+                    headers: { 
+                        "Content-Type": "application/json", 
+                        "Authorization": `Bearer ${key}`,
+                        "HTTP-Referer": window.location.origin, 
+                        "X-Title": "Stock Metadata Generator"
+                    },
+                    body: JSON.stringify({
+                        model: openRouterModel || "google/gemini-2.0-flash-001",
+                        messages: [{ role: "user", content: messagesContent }],
+                        temperature: 0.7,
+                        response_format: { type: "json_object" }
+                    }),
+                    signal: controller.signal
+                });
+
+                if (!res.ok) {
+                     let errorDetail = "";
+                     try { errorDetail = await res.text(); } catch(e) {}
+                     console.warn(`OpenRouter API Error (${res.status}): ${errorDetail}`);
+                     
+                     if (res.status === 401 || res.status === 429 || res.status >= 500) {
+                         continue; // Rotate key
+                     }
+                     throw new Error(`OpenRouter API Error: ${res.status} ${res.statusText}`);
+                }
+
+                const data = await res.json();
+                clearTimeout(timeoutId);
+                
+                if (!data.choices?.[0]?.message?.content) throw new Error("Invalid OpenRouter response.");
+                let json = parseJSONSafely(data.choices[0].message.content);
+                
+                if (json.title) {
+                    json.title = json.title.replace(/^(Title|Subject):\s*/i, "").trim();
+                }
+
+                globalOpenRouterKeyIndex = (keyIndex + 1) % validKeys.length;
+                return processResponseJSON(json);
+
+             } catch(err: any) {
+                 clearTimeout(timeoutId);
+                 if (err.name === 'AbortError' || getErrorMessage(err).toLowerCase().includes('429')) {
+                     continue; 
+                 }
+                 throw err;
+             }
+        }
+        throw new Error("All OpenRouter keys failed.");
+    };
+
+    return retryWithBackoff(async () => {
+        if (aiProvider === AIProvider.GEMINI) {
+             return await callGemini();
+        } else if (aiProvider === AIProvider.MISTRAL) {
+             return await callMistral();
+        } else {
+             return await callOpenRouter();
+        }
+    }, 3, 2000, (error) => {
+        // Retry predicate: Retry on 429/Quota/Server errors OR if parsing failed (often temporary)
+        const msg = getErrorMessage(error).toLowerCase();
+        return msg.includes('429') || 
+               msg.includes('quota') || 
+               msg.includes('503') || 
+               msg.includes('500') ||
+               msg.includes('502') ||
+               msg.includes('504') ||
+               msg.includes('internal server error') || 
+               msg.includes('bad request') || 
+               msg.includes('400') ||
+               msg.includes('exhausted') || 
+               msg.includes('fetch failed') || 
+               msg.includes('failed to parse json') || 
+               msg.includes('json');
+    }); 
 };

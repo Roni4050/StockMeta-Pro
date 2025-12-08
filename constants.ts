@@ -24,12 +24,16 @@ export const DEFAULT_SETTINGS: Settings = {
     maxKeywords: 50,
     prefix: '',
     suffix: '',
+    negativeTitleWords: '',
+    negativeKeywords: '',
     isolatedWhite: false,
     isolatedTransparent: false,
     imageType: ImageType.NONE,
     mistralApiKeys: [],
     geminiApiKeys: [],
+    openRouterApiKeys: [],
     aiProvider: AIProvider.GEMINI,
     singleGenerationMode: false,
     geminiModel: GeminiModel.FLASH, // Default to Gemini 2.5 Flash
+    openRouterModel: "google/gemini-2.0-flash-001", // Default OpenRouter model
 };

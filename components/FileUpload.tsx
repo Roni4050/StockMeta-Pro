@@ -44,50 +44,55 @@ export const FileUpload: React.FC<FileUploadProps> = ({ onFilesChange, isUploadi
             onDragLeave={handleDrag}
             onDragOver={handleDrag}
             onDrop={handleDrop}
-            className={`w-full p-8 mb-8 bg-gray-800/50 border-2 ${isDragging ? 'border-teal-400' : 'border-gray-700'} border-dashed rounded-lg transition-colors duration-200 ${isUploading ? 'opacity-70 cursor-wait' : ''}`}
+            className={`group relative w-full p-10 mb-8 rounded-2xl border-2 border-dashed transition-all duration-300 ease-in-out ${
+                isDragging 
+                    ? 'border-indigo-400 bg-indigo-900/20 scale-[1.01] shadow-2xl shadow-indigo-500/20' 
+                    : 'border-slate-700 bg-slate-800/30 hover:bg-slate-800/50 hover:border-slate-600'
+            } ${isUploading ? 'opacity-70 cursor-wait' : ''}`}
         >
-            <div className="space-y-2 text-center">
+            <div className="space-y-4 text-center">
                 {isUploading ? (
-                    <div className="flex flex-col items-center justify-center py-4">
-                        <svg className="animate-spin h-10 w-10 text-teal-400 mb-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                        </svg>
-                        <p className="text-sm font-semibold text-gray-300">Processing bulk upload...</p>
-                        <p className="text-xs text-gray-500">Matching files and creating previews</p>
+                    <div className="flex flex-col items-center justify-center py-6">
+                        <div className="relative w-16 h-16 mb-4">
+                            <div className="absolute top-0 left-0 w-full h-full border-4 border-slate-700 rounded-full"></div>
+                            <div className="absolute top-0 left-0 w-full h-full border-4 border-indigo-500 rounded-full animate-spin border-t-transparent"></div>
+                        </div>
+                        <p className="text-lg font-bold text-white tracking-tight">Analysing Assets...</p>
+                        <p className="text-sm text-slate-400">Grouping vectors & previews</p>
                     </div>
                 ) : (
                     <>
-                        <svg className="mx-auto h-12 w-12 text-gray-500" stroke="currentColor" fill="none" viewBox="0 0 48 48" aria-hidden="true">
-                            <path d="M28 8H12a4 4 0 00-4 4v20m32-12v8m0 0v8a4 4 0 01-4 4H12a4 4 0 01-4-4v-4m32-4l-3.172-3.172a4 4 0 00-5.656 0L28 28M8 32l9.172-9.172a4 4 0 015.656 0L28 28m0 0l4 4m4-24h8m-4-4v8" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                        </svg>
-                        <div className="flex justify-center text-sm text-gray-400">
-                            <label htmlFor="file-upload" className="relative cursor-pointer font-semibold text-teal-400 hover:text-teal-500 focus-within:outline-none focus-within:ring-2 focus-within:ring-offset-2 focus-within:ring-offset-gray-900 focus-within:ring-teal-500">
-                                <span>Click to bulk upload</span>
-                                <input 
-                                    id="file-upload" 
-                                    name="file-upload" 
-                                    type="file" 
-                                    multiple 
-                                    className="sr-only" 
-                                    onChange={handleChange} 
-                                    accept="image/jpeg,image/png,image/svg+xml,video/mp4,video/quicktime,video/x-msvideo,video/x-matroska,video/webm,video/x-m4v,application/postscript,application/illustrator,application/eps,application/x-eps,image/x-eps,image/eps,application/pdf" 
-                                />
-                            </label>
-                            <p className="pl-1">or drag and drop</p>
+                        <div className={`mx-auto w-20 h-20 rounded-full flex items-center justify-center bg-slate-800 border border-slate-700 group-hover:border-indigo-500/30 group-hover:scale-110 transition-transform duration-300 shadow-xl ${isDragging ? 'bg-indigo-900/30' : ''}`}>
+                            <svg className={`w-10 h-10 ${isDragging ? 'text-indigo-400' : 'text-slate-500 group-hover:text-indigo-400'} transition-colors`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                            </svg>
                         </div>
-                        <p className="text-xs text-gray-500 mt-2">
-                            Supported formats:
-                            <br />
-                            Images: JPG, PNG, SVG
-                            <br />
-                            Vectors: EPS, AI, PDF
-                            <br />
-                            Videos: MP4, MOV, AVI, WEBM, MKV
-                        </p>
-                         <p className="text-xs text-gray-500 pt-1">
-                            Tip: For Vector files (EPS/AI), bulk upload matching JPG previews for best results.
-                        </p>
+                        
+                        <div className="space-y-1">
+                            <div className="text-base text-slate-300 font-medium">
+                                <label htmlFor="file-upload" className="relative cursor-pointer text-indigo-400 hover:text-indigo-300 hover:underline decoration-indigo-500/30 underline-offset-4 font-bold transition-all">
+                                    <span>Upload files</span>
+                                    <input 
+                                        id="file-upload" 
+                                        name="file-upload" 
+                                        type="file" 
+                                        multiple 
+                                        className="sr-only" 
+                                        onClick={(e) => (e.currentTarget.value = '')} 
+                                        onChange={handleChange} 
+                                        accept="image/jpeg,image/png,image/svg+xml,video/mp4,video/quicktime,video/x-msvideo,video/x-matroska,video/webm,video/x-m4v,application/postscript,application/illustrator,application/eps,application/x-eps,image/x-eps,image/eps,application/pdf" 
+                                    />
+                                </label>
+                                <span className="mx-1">or drag and drop</span>
+                            </div>
+                            <p className="text-xs text-slate-500">
+                                JPG, PNG, EPS, AI, PDF, MP4, MOV
+                            </p>
+                        </div>
+                         <div className="inline-flex items-center px-3 py-1 rounded-full bg-slate-800/50 border border-slate-700/50 text-[10px] text-slate-400 mt-4">
+                            <span className="w-1.5 h-1.5 bg-indigo-500 rounded-full mr-2"></span>
+                            Smart Grouping: Vectors + Previews linked automatically
+                        </div>
                     </>
                 )}
             </div>

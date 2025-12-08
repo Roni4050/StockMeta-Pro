@@ -25,6 +25,7 @@ export enum FileStatus {
 export enum AIProvider {
     GEMINI = "Gemini",
     MISTRAL = "Mistral",
+    OPENROUTER = "OpenRouter",
 }
 
 export enum GeminiModel {
@@ -41,14 +42,18 @@ export interface Settings {
     maxKeywords: number;
     prefix: string;
     suffix: string;
+    negativeTitleWords: string;
+    negativeKeywords: string;
     isolatedWhite: boolean;
     isolatedTransparent: boolean;
     imageType: ImageType;
     mistralApiKeys: string[]; // Mistral keys
     geminiApiKeys: string[]; // Gemini keys
+    openRouterApiKeys: string[]; // OpenRouter keys
     aiProvider: AIProvider;
     singleGenerationMode: boolean;
     geminiModel: GeminiModel;
+    openRouterModel: string;
 }
 
 export interface ProcessedFile {

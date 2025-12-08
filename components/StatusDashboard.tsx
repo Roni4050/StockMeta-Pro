@@ -1,7 +1,7 @@
 
 import React from 'react';
 import { ProcessedFile, FileStatus } from '../types';
-import { TrashIcon, CheckCircleIcon, RefreshIcon } from './icons';
+import { TrashIcon, CheckCircleIcon, RefreshIcon, InfoIcon } from './icons';
 
 interface StatusDashboardProps {
     files: ProcessedFile[];
@@ -9,14 +9,16 @@ interface StatusDashboardProps {
     isProcessing: boolean;
 }
 
-const StatCard: React.FC<{ label: string; value: number; colorClass: string; bgClass: string; icon: React.ReactNode }> = ({ label, value, colorClass, bgClass, icon }) => (
-    <div className={`rounded-xl border border-gray-700/50 p-5 flex flex-col justify-between shadow-sm relative overflow-hidden ${bgClass}`}>
-        <div className="absolute top-0 right-0 p-4 opacity-10 transform scale-150">
+const StatCard: React.FC<{ label: string; value: number; colorClass: string; gradientClass: string; icon: React.ReactNode; isPulse?: boolean }> = ({ label, value, colorClass, gradientClass, icon, isPulse }) => (
+    <div className={`relative rounded-xl border border-white/5 p-5 flex flex-col justify-between overflow-hidden backdrop-blur-md transition-all hover:border-white/10 group ${gradientClass}`}>
+        <div className="absolute top-0 right-0 p-4 opacity-10 transform scale-150 transition-transform group-hover:scale-125 group-hover:opacity-20">
             {icon}
         </div>
-        <p className="text-gray-400 text-[10px] uppercase tracking-widest font-bold mb-2">{label}</p>
-        <div className="flex items-end space-x-2">
-            <p className={`text-3xl font-bold leading-none ${colorClass}`}>{value}</p>
+        <div className="relative z-10">
+            <p className="text-slate-400 text-[10px] uppercase tracking-widest font-bold mb-1 opacity-80">{label}</p>
+            <div className="flex items-center space-x-2">
+                <p className={`text-3xl font-black tracking-tight ${colorClass} ${isPulse && value > 0 ? 'animate-pulse' : ''}`}>{value}</p>
+            </div>
         </div>
     </div>
 );
@@ -34,45 +36,48 @@ export const StatusDashboard: React.FC<StatusDashboardProps> = ({ files, onClear
     return (
         <div className="mb-8">
             <div className="flex justify-between items-center mb-4">
-                <h2 className="text-sm font-semibold text-gray-400 uppercase tracking-wider">Session Overview</h2>
+                <h2 className="text-sm font-bold text-slate-400 uppercase tracking-widest flex items-center">
+                    <span className="w-1.5 h-1.5 bg-indigo-500 rounded-full mr-2"></span>
+                    Session Overview
+                </h2>
                 <button
                     onClick={onClear}
-                    disabled={isProcessing}
-                    className="flex items-center space-x-2 px-4 py-2 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white border border-gray-700 hover:border-red-500/50 transition-all disabled:opacity-50 disabled:cursor-not-allowed group"
+                    className="flex items-center space-x-2 px-3 py-1.5 rounded-lg bg-slate-800/50 hover:bg-rose-950/30 text-slate-400 hover:text-rose-400 border border-slate-700 hover:border-rose-500/30 transition-all disabled:opacity-50 group text-xs font-medium backdrop-blur-sm"
                 >
-                    <span className="text-gray-500 group-hover:text-red-400 transition-colors"><TrashIcon /></span>
-                    <span className="text-xs font-medium">Clear Session</span>
+                    <TrashIcon />
+                    <span>Clear All</span>
                 </button>
             </div>
             
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                  <StatCard 
-                    label="Total Files" 
+                    label="Total Assets" 
                     value={totalFiles} 
                     colorClass="text-white"
-                    bgClass="bg-gray-800"
+                    gradientClass="bg-slate-800/60 hover:bg-slate-800/80"
                     icon={<div className="scale-125"><RefreshIcon/></div>}
+                />
+                 <StatCard 
+                    label="Processing" 
+                    value={processingCount} 
+                    colorClass="text-indigo-300"
+                    gradientClass="bg-indigo-900/20 hover:bg-indigo-900/30 border-indigo-500/20"
+                    icon={<RefreshIcon/>}
+                    isPulse={isProcessing}
                 />
                  <StatCard 
                     label="Completed" 
                     value={completedCount} 
-                    colorClass="text-green-400"
-                    bgClass="bg-green-900/10"
+                    colorClass="text-emerald-300"
+                    gradientClass="bg-emerald-900/10 hover:bg-emerald-900/20 border-emerald-500/20"
                     icon={<CheckCircleIcon/>}
                 />
                  <StatCard 
-                    label="In Progress" 
-                    value={processingCount} 
-                    colorClass="text-blue-400"
-                    bgClass="bg-blue-900/10"
-                    icon={<RefreshIcon/>}
-                />
-                 <StatCard 
-                    label="Needs Attention" 
+                    label="Issues" 
                     value={errorCount} 
-                    colorClass="text-red-400"
-                    bgClass="bg-red-900/10"
-                    icon={<TrashIcon/>}
+                    colorClass="text-rose-300"
+                    gradientClass="bg-rose-900/10 hover:bg-rose-900/20 border-rose-500/20"
+                    icon={<InfoIcon/>}
                 />
             </div>
         </div>

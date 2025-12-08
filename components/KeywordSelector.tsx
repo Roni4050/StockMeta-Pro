@@ -16,33 +16,43 @@ export const KeywordSelector: React.FC<KeywordSelectorProps> = ({ allKeywords, s
     const [copied, setCopied] = useState(false);
 
     useEffect(() => {
-        // If the max keywords limit from settings is lowered, adjust the "select top" count
-        // to not exceed the new limit.
         setSelectTopCount(prev => Math.min(prev, maxKeywords));
     }, [maxKeywords]);
 
-    const selectedKeywordsSet = new Set(selectedKeywords);
-    const atLimit = selectedKeywords.length >= maxKeywords;
+    // Derived state for quick lookup, ensuring case-insensitive uniqueness check
+    const selectedLowerSet = new Set(selectedKeywords.map(k => k.toLowerCase()));
+    
+    // Accurate unique count
+    const count = selectedLowerSet.size;
+    const atLimit = count >= maxKeywords;
 
     const handleKeywordToggle = (keyword: string) => {
-        const isSelected = selectedKeywordsSet.has(keyword);
+        const lowerKey = keyword.toLowerCase();
+        const isSelected = selectedLowerSet.has(lowerKey);
+        
         let newSelected: string[];
         if (isSelected) {
-            newSelected = selectedKeywords.filter(k => k !== keyword);
+            // Remove matching keys
+            newSelected = selectedKeywords.filter(k => k.toLowerCase() !== lowerKey);
         } else {
             if (!atLimit) {
-                newSelected = [...selectedKeywords, keyword];
+                // Add new key, ensuring we don't duplicate visually if backend didn't clean it
+                // Filter out any existing case-variants just in case, then add the new one
+                const cleanExisting = selectedKeywords.filter(k => k.toLowerCase() !== lowerKey);
+                newSelected = [...cleanExisting, keyword];
             } else {
-                return; // Do nothing if at limit and trying to add
+                return; 
             }
         }
         onChange(newSelected);
     };
     
     const handleAddCustomKeyword = () => {
-        const trimmedValue = inputValue.trim().toLowerCase();
-        // Check if keyword is valid, not already present (case-insensitive), and not at the limit
-        if (trimmedValue && !allKeywords.some(k => k.toLowerCase() === trimmedValue) && !atLimit) {
+        const trimmedValue = inputValue.trim();
+        const lowerValue = trimmedValue.toLowerCase();
+        
+        // Check valid, not present (normalized), not limit
+        if (trimmedValue && !selectedLowerSet.has(lowerValue) && !atLimit) {
             onAddKeyword(trimmedValue);
             setInputValue('');
         }
@@ -56,8 +66,22 @@ export const KeywordSelector: React.FC<KeywordSelectorProps> = ({ allKeywords, s
     };
 
     const handleSelectTop = () => {
-        const count = Math.min(selectTopCount, maxKeywords);
-        onChange(allKeywords.slice(0, count));
+        const limit = Math.min(selectTopCount, maxKeywords);
+        
+        // Create unique list from allKeywords
+        const uniqueAll = new Set<string>();
+        const result: string[] = [];
+        
+        for (const k of allKeywords) {
+            if (result.length >= limit) break;
+            const lower = k.toLowerCase();
+            if (!uniqueAll.has(lower)) {
+                uniqueAll.add(lower);
+                result.push(k);
+            }
+        }
+        
+        onChange(result);
     };
 
     const handleClearSelection = () => {
@@ -100,7 +124,7 @@ export const KeywordSelector: React.FC<KeywordSelectorProps> = ({ allKeywords, s
                             onClick={handleSelectTop}
                             disabled={allKeywords.length === 0}
                             className="px-2 h-8 text-xs font-semibold bg-gray-600 text-gray-200 rounded-r-md hover:bg-gray-500 disabled:bg-gray-700 disabled:text-gray-500 disabled:cursor-not-allowed transition-all border border-l-0 border-gray-600 focus:outline-none focus:ring-1 focus:ring-teal-500"
-                            title={`Select the first ${selectTopCount} keywords`}
+                            title={`Select the first ${selectTopCount} unique keywords`}
                         >
                             Select Top
                         </button>
@@ -130,9 +154,10 @@ export const KeywordSelector: React.FC<KeywordSelectorProps> = ({ allKeywords, s
                 </div>
 
                 {/* Right side: Status */}
-                <div className="text-xs text-gray-400 font-medium text-right flex-shrink-0 ml-auto">
-                    <span>{selectedKeywords.length} / {maxKeywords} keywords</span>
-                    { atLimit && <span className="block text-yellow-400 font-medium">Limit reached!</span> }
+                <div className="text-xs text-gray-400 font-medium text-right flex-shrink-0 ml-auto flex items-center space-x-2">
+                    <span className={`px-2 py-0.5 rounded ${atLimit ? 'bg-amber-900/30 text-amber-500 border border-amber-500/30' : 'bg-slate-800 text-slate-400'}`}>
+                        {count} / {maxKeywords}
+                    </span>
                 </div>
             </div>
 
@@ -140,18 +165,18 @@ export const KeywordSelector: React.FC<KeywordSelectorProps> = ({ allKeywords, s
                 {allKeywords.length > 0 ? (
                     <div className="flex flex-wrap gap-2">
                         {allKeywords.map(keyword => {
-                            const isSelected = selectedKeywordsSet.has(keyword);
+                            const isSelected = selectedLowerSet.has(keyword.toLowerCase());
                             const isDisabled = !isSelected && atLimit;
                             return (
                                 <button
                                     key={keyword}
                                     onClick={() => handleKeywordToggle(keyword)}
                                     disabled={isDisabled}
-                                    className={`px-2 py-1 text-xs font-medium rounded-full transition-colors ${
+                                    className={`px-2 py-1 text-xs font-medium rounded-full transition-colors select-none ${
                                         isSelected 
-                                            ? 'bg-teal-500 text-white hover:bg-teal-600' 
+                                            ? 'bg-teal-500 text-white hover:bg-teal-600 shadow-sm' 
                                             : 'bg-gray-600 text-gray-300 hover:bg-gray-500'
-                                    } ${isDisabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+                                    } ${isDisabled ? 'opacity-40 cursor-not-allowed' : ''}`}
                                 >
                                     {keyword}
                                 </button>
@@ -159,7 +184,7 @@ export const KeywordSelector: React.FC<KeywordSelectorProps> = ({ allKeywords, s
                         })}
                     </div>
                 ) : (
-                    <div className="flex items-center justify-center h-full text-gray-500" style={{minHeight: '52px'}}>
+                    <div className="flex items-center justify-center h-full text-gray-500 italic" style={{minHeight: '52px'}}>
                         No keywords generated yet.
                     </div>
                 )}

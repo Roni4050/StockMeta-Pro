@@ -8,11 +8,12 @@ import { StatusDashboard } from './components/StatusDashboard';
 import { generateMetadata } from './services/geminiService';
 import { exportToCsv, exportVectorZip } from './services/csvService';
 import { processWithConcurrency } from './services/apiUtils';
-import { ProcessedFile, Settings, FileStatus, AIProvider } from './types';
+import { ProcessedFile, Settings, FileStatus, AIProvider, ImageType } from './types';
 import { PLATFORMS, IMAGE_TYPES, DEFAULT_SETTINGS } from './constants';
+import { TrashIcon, DownloadIcon, ArchiveIcon } from './components/icons';
 
-const CONCURRENCY_LIMIT = 4;
-const INTER_REQUEST_DELAY_MS = 50;
+const CONCURRENCY_LIMIT = 2; 
+const INTER_REQUEST_DELAY_MS = 2000;
 
 const App: React.FC = () => {
     const [settings, setSettings] = useState<Settings>(() => {
@@ -42,7 +43,9 @@ const App: React.FC = () => {
     const [isProcessing, setIsProcessing] = useState(false);
     const [isUploading, setIsUploading] = useState(false);
     
-    // Ref to hold latest processedFiles for event handlers to avoid stale closures
+    // Ref to control processing loop stop
+    const stopProcessingRef = useRef(false);
+    
     const processedFilesRef = useRef(processedFiles);
     useEffect(() => {
         processedFilesRef.current = processedFiles;
@@ -61,15 +64,34 @@ const App: React.FC = () => {
 
     const handleFilesChange = useCallback(async (files: File[]) => {
         setIsUploading(true);
+        let hasVector = false;
+        let hasLogo = false;
+
+        for (const file of files) {
+             const n = file.name.toLowerCase();
+             if (n.endsWith('.eps') || n.endsWith('.ai') || n.endsWith('.pdf') || n.endsWith('.svg')) {
+                 hasVector = true;
+                 if (n.includes('logo')) {
+                     hasLogo = true;
+                     break; 
+                 }
+             }
+        }
+
+        if (hasLogo) {
+            setSettings(prev => ({ ...prev, imageType: ImageType.LOGO }));
+        } else if (hasVector) {
+            setSettings(prev => {
+                if (prev.imageType === ImageType.LOGO) return prev;
+                return { ...prev, imageType: ImageType.VECTOR };
+            });
+        }
         
-        // Wait a tick to allow UI to show loading state
         await new Promise(resolve => setTimeout(resolve, 50));
 
-        // OPTIMIZED: Use Map for O(N) grouping instead of O(N^2) nested loops
         const fileMap = new Map<string, { vector?: File; preview?: File; others: File[] }>();
         const getBaseName = (name: string) => name.substring(0, name.lastIndexOf('.')).toLowerCase();
 
-        // 1. Group files by name stem
         for (const file of files) {
             const name = file.name.toLowerCase();
             const base = getBaseName(file.name);
@@ -82,8 +104,6 @@ const App: React.FC = () => {
             if (name.endsWith('.eps') || name.endsWith('.ai') || name.endsWith('.pdf')) {
                 entry.vector = file;
             } else if (name.endsWith('.jpg') || name.endsWith('.jpeg') || name.endsWith('.png')) {
-                // If we already have a preview, treat this as another 'other' or overwrite. 
-                // Usually overwrite is correct for pairs.
                 entry.preview = file;
             } else {
                 entry.others.push(file);
@@ -92,9 +112,7 @@ const App: React.FC = () => {
 
         const newItems: ProcessedFile[] = [];
         
-        // 2. Flatten Map into ProcessedFiles
         for (const [baseName, entry] of fileMap.entries()) {
-            // Case A: Vector File (with optional preview)
             if (entry.vector) {
                 const fileId = `${entry.vector.name}-${entry.vector.lastModified}-${Math.random()}`;
                 newItems.push({
@@ -104,9 +122,7 @@ const App: React.FC = () => {
                     status: FileStatus.PENDING,
                     metadata: { title: '', description: '', keywords: [], selectedKeywords: [] },
                 });
-                // Note: entry.preview is consumed here, so we don't add it as a standalone image below
             } 
-            // Case B: Standalone Image (no vector partner)
             else if (entry.preview) {
                 const fileId = `${entry.preview.name}-${entry.preview.lastModified}-${Math.random()}`;
                 newItems.push({
@@ -118,25 +134,22 @@ const App: React.FC = () => {
                 });
             }
 
-            // Case C: Other files (videos, etc)
             entry.others.forEach(otherFile => {
                 const fileId = `${otherFile.name}-${otherFile.lastModified}-${Math.random()}`;
                 newItems.push({
                     id: fileId,
                     file: otherFile,
-                    preview: URL.createObjectURL(otherFile), // Browser handles video/misc blob URLs mostly fine
+                    preview: URL.createObjectURL(otherFile),
                     status: FileStatus.PENDING,
                     metadata: { title: '', description: '', keywords: [], selectedKeywords: [] },
                 });
             });
         }
 
-        // 3. Batch Update State (Chunking) to prevent UI freeze
         const BATCH_SIZE = 50;
         for (let i = 0; i < newItems.length; i += BATCH_SIZE) {
             const batch = newItems.slice(i, i + BATCH_SIZE);
             setProcessedFiles(prev => [...prev, ...batch]);
-            // Small delay between batches to let React render
             await new Promise(resolve => setTimeout(resolve, 10));
         }
 
@@ -174,12 +187,11 @@ const App: React.FC = () => {
     }, []);
 
     const processFile = useCallback(async (fileId: string) => {
-        const fileToProcess = processedFilesRef.current.find(f => f.id === fileId);
+        // Double check stop signal
+        if (stopProcessingRef.current) return;
 
-        if (!fileToProcess) {
-            console.warn(`File with id ${fileId} not found for processing.`);
-            return;
-        }
+        const fileToProcess = processedFilesRef.current.find(f => f.id === fileId);
+        if (!fileToProcess) return;
 
         setProcessedFiles(prev =>
             prev.map(pf =>
@@ -223,6 +235,8 @@ const App: React.FC = () => {
     const handleGenerateAll = async () => {
         if (isProcessing) return;
         
+        stopProcessingRef.current = false;
+        
         const updatedFiles = processedFiles.map(pf =>
             pf.status === FileStatus.ERROR ? { ...pf, status: FileStatus.PENDING, error: undefined } : pf
         );
@@ -235,27 +249,44 @@ const App: React.FC = () => {
             setProcessedFiles(updatedFiles);
             setIsProcessing(true);
 
+            // Using wrapper to check stop signal before every call
+            const processWrapper = async (id: string) => {
+                if (stopProcessingRef.current) return;
+                await processFile(id);
+            };
+
             if (settings.singleGenerationMode) {
                 for (const id of pendingFileIds) {
-                    await processFile(id);
-                    await new Promise(resolve => setTimeout(resolve, INTER_REQUEST_DELAY_MS));
+                    if (stopProcessingRef.current) break;
+                    if (!processedFilesRef.current.some(f => f.id === id)) break; 
+                    await processWrapper(id);
+                    if (!stopProcessingRef.current) {
+                         await new Promise(resolve => setTimeout(resolve, INTER_REQUEST_DELAY_MS));
+                    }
                 }
             } else {
                 await processWithConcurrency(
                     pendingFileIds,
-                    (id) => processFile(id),
+                    processWrapper,
                     CONCURRENCY_LIMIT,
                     INTER_REQUEST_DELAY_MS
                 );
             }
             
             setIsProcessing(false);
+            stopProcessingRef.current = false;
         }
+    };
+    
+    const handleStopProcessing = () => {
+        stopProcessingRef.current = true;
+        setIsProcessing(false);
     };
     
     const handleRegenerate = useCallback(async (id: string) => {
       if (isProcessing) return;
       setIsProcessing(true);
+      stopProcessingRef.current = false;
       await processFile(id);
       setIsProcessing(false);
     }, [isProcessing, processFile]);
@@ -279,21 +310,21 @@ const App: React.FC = () => {
         }
     };
     
-    // Robust Clear All Handler
     const handleClearAll = useCallback(() => {
         const files = processedFilesRef.current;
         if (files.length === 0) return;
         
         if (window.confirm('Are you sure you want to clear all uploaded files? This action cannot be undone.')) {
-            // Cleanup URLs
+            // Stop any ongoing processing first
+            stopProcessingRef.current = true;
+            
             files.forEach(pf => {
                 if (pf.preview && pf.preview.startsWith('blob:')) {
                     URL.revokeObjectURL(pf.preview);
                 }
             });
-            // Force reset everything
+            processedFilesRef.current = []; 
             setProcessedFiles([]);
-            processedFilesRef.current = [];
             setIsProcessing(false);
             setIsUploading(false);
         }
@@ -302,11 +333,11 @@ const App: React.FC = () => {
     const filesToProcessCount = processedFiles.filter(pf => [FileStatus.PENDING, FileStatus.ERROR].includes(pf.status)).length;
 
     return (
-        <div className="flex h-screen bg-gray-900 text-gray-200 font-sans overflow-hidden">
-            {/* Left Sidebar - Scrollable */}
-            <aside className="w-80 lg:w-96 flex-shrink-0 bg-gray-800/80 backdrop-blur-md border-r border-gray-700 flex flex-col h-full shadow-2xl z-20">
+        <div className="flex h-screen bg-slate-950 text-slate-200 font-sans overflow-hidden">
+            {/* Left Sidebar - Refined Dark Theme */}
+            <aside className="w-80 lg:w-96 flex-shrink-0 bg-slate-900/90 backdrop-blur-xl border-r border-slate-800 flex flex-col h-full shadow-[5px_0_30px_-10px_rgba(0,0,0,0.5)] z-20">
                 <Header />
-                <div className="flex-grow overflow-y-auto p-5 scrollbar-thin scrollbar-thumb-gray-600 scrollbar-track-transparent">
+                <div className="flex-grow overflow-y-auto p-5 scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-transparent">
                     <SettingsPanel
                         settings={settings}
                         setSettings={setSettings}
@@ -314,48 +345,58 @@ const App: React.FC = () => {
                         imageTypes={IMAGE_TYPES}
                     />
                 </div>
-                {/* Fixed Footer for Actions */}
-                <div className="p-5 bg-gray-800 border-t border-gray-700 space-y-3">
-                     <button
-                        onClick={handleGenerateAll}
-                        disabled={isProcessing || filesToProcessCount === 0 || isUploading}
-                        className="w-full flex items-center justify-center px-4 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-semibold rounded-lg shadow-md disabled:opacity-50 disabled:cursor-not-allowed transition-all transform active:scale-[0.98]"
-                    >
-                        {isProcessing ? (
-                            <><svg className="animate-spin -ml-1 mr-2 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>Generating...</>
-                        ) : `Generate All (${filesToProcessCount})`}
-                    </button>
+                {/* Footer Actions */}
+                <div className="p-5 bg-slate-900 border-t border-slate-800 space-y-3 shadow-[0_-5px_20px_-5px_rgba(0,0,0,0.3)]">
+                     {isProcessing ? (
+                        <button
+                            onClick={handleStopProcessing}
+                            className="w-full flex items-center justify-center px-4 py-3 bg-rose-600 hover:bg-rose-500 text-white font-bold rounded-lg shadow-lg shadow-rose-900/30 transition-all transform active:scale-[0.98] border border-white/10"
+                        >
+                            <span className="mr-2 animate-pulse">●</span> Stop Processing
+                        </button>
+                     ) : (
+                        <button
+                            onClick={handleGenerateAll}
+                            disabled={filesToProcessCount === 0 || isUploading}
+                            className="w-full flex items-center justify-center px-4 py-3 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white font-bold rounded-lg shadow-lg shadow-indigo-900/30 disabled:opacity-50 disabled:cursor-not-allowed transition-all transform active:scale-[0.98] border border-white/10"
+                        >
+                            Start Batch Process ({filesToProcessCount})
+                        </button>
+                     )}
                     
                     <div className="grid grid-cols-2 gap-3">
                         <button
                             onClick={handleExport}
                             disabled={isProcessing || !processedFiles.some(f => f.status === FileStatus.COMPLETED) || isUploading}
-                            className="w-full px-2 py-2.5 text-sm font-medium bg-gray-700 hover:bg-gray-600 border border-gray-600 rounded-lg text-gray-300 disabled:opacity-50 transition-colors"
+                            className="w-full flex items-center justify-center space-x-2 px-2 py-2.5 text-xs font-bold uppercase tracking-wide bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg shadow-lg shadow-emerald-900/20 disabled:opacity-50 disabled:bg-slate-800 disabled:text-slate-500 transition-all border border-emerald-500/50 hover:border-emerald-400"
                         >
-                            Export CSV
+                            <DownloadIcon className="w-4 h-4" />
+                            <span>CSV</span>
                         </button>
                         <button
                             onClick={handleExportVectorCsv}
                             disabled={isProcessing || !processedFiles.some(f => f.status === FileStatus.COMPLETED) || isUploading}
-                             className="w-full px-2 py-2.5 text-sm font-medium bg-gray-700 hover:bg-gray-600 border border-gray-600 rounded-lg text-gray-300 disabled:opacity-50 transition-colors"
+                             className="w-full flex items-center justify-center space-x-2 px-2 py-2.5 text-xs font-bold uppercase tracking-wide bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg shadow-lg shadow-emerald-900/20 disabled:opacity-50 disabled:bg-slate-800 disabled:text-slate-500 transition-all border border-emerald-500/50 hover:border-emerald-400"
                         >
-                            Vector CSV
+                            <ArchiveIcon className="w-4 h-4" />
+                            <span>ZIP</span>
                         </button>
                     </div>
 
                     <button
                         onClick={handleClearAll}
                         disabled={processedFiles.length === 0}
-                        className="w-full px-4 py-2.5 text-sm font-medium text-red-400 hover:text-red-300 bg-red-900/10 hover:bg-red-900/20 border border-red-900/30 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        className="w-full flex items-center justify-center space-x-2 px-4 py-2 text-xs font-bold uppercase tracking-wide text-rose-400 hover:text-white bg-transparent hover:bg-rose-600 border border-rose-900/30 hover:border-rose-500 rounded-lg transition-all disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-rose-400"
                     >
-                        Clear All
+                        <TrashIcon className="w-4 h-4" />
+                        <span>Clear Session</span>
                     </button>
                 </div>
             </aside>
             
-            {/* Right Main Content - Scrollable */}
-            <main className="flex-1 h-full overflow-y-auto scrollbar-thin scrollbar-thumb-gray-600 scrollbar-track-gray-900 relative">
-                 <div className="max-w-6xl mx-auto p-6 lg:p-10 pb-20">
+            {/* Main Content - Dynamic Background */}
+            <main className="flex-1 h-full overflow-y-auto scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-slate-900 relative bg-gradient-to-br from-slate-950 via-slate-900 to-indigo-950/20">
+                 <div className="max-w-7xl mx-auto p-6 lg:p-10 pb-32">
                     <FileUpload onFilesChange={handleFilesChange} isUploading={isUploading} />
                     
                     <StatusDashboard 
