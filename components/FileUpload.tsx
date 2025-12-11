@@ -58,7 +58,7 @@ export const FileUpload: React.FC<FileUploadProps> = ({ onFilesChange, isUploadi
                             <div className="absolute top-0 left-0 w-full h-full border-4 border-indigo-500 rounded-full animate-spin border-t-transparent"></div>
                         </div>
                         <p className="text-lg font-bold text-white tracking-tight">Analysing Assets...</p>
-                        <p className="text-sm text-slate-400">Grouping vectors & previews</p>
+                        <p className="text-sm text-slate-400">Grouping vectors, videos & previews</p>
                     </div>
                 ) : (
                     <>
@@ -80,18 +80,18 @@ export const FileUpload: React.FC<FileUploadProps> = ({ onFilesChange, isUploadi
                                         className="sr-only" 
                                         onClick={(e) => (e.currentTarget.value = '')} 
                                         onChange={handleChange} 
-                                        accept="image/jpeg,image/png,image/svg+xml,video/mp4,video/quicktime,video/x-msvideo,video/x-matroska,video/webm,video/x-m4v,application/postscript,application/illustrator,application/eps,application/x-eps,image/x-eps,image/eps,application/pdf" 
+                                        accept="image/jpeg,image/png,image/svg+xml,video/mp4,video/quicktime,video/x-msvideo,video/x-matroska,video/webm,video/x-m4v,application/postscript,application/illustrator,application/eps,application/x-eps,image/x-eps,image/eps,application/pdf,.jpj" 
                                     />
                                 </label>
                                 <span className="mx-1">or drag and drop</span>
                             </div>
                             <p className="text-xs text-slate-500">
-                                JPG, PNG, EPS, AI, PDF, MP4, MOV
+                                Supports: EPS, JPG, PNG, Vector, Video
                             </p>
                         </div>
                          <div className="inline-flex items-center px-3 py-1 rounded-full bg-slate-800/50 border border-slate-700/50 text-[10px] text-slate-400 mt-4">
                             <span className="w-1.5 h-1.5 bg-indigo-500 rounded-full mr-2"></span>
-                            Smart Grouping: Vectors + Previews linked automatically
+                            Smart Bulk Grouping: Vectors + Previews linked automatically
                         </div>
                     </>
                 )}

@@ -2,6 +2,7 @@
 import React, { useState, useRef } from 'react';
 import { Settings, Platform, ImageType, AIProvider, GeminiModel } from '../types';
 import { ViewIcon, TrashIcon, CheckCircleIcon, UploadIcon } from './icons';
+import { GROQ_MODELS } from '../constants';
 
 interface SettingsPanelProps {
     settings: Settings;
@@ -76,7 +77,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
         setSettings(prev => ({ ...prev, [key]: value }));
     };
 
-    const { aiProvider, geminiApiKeys, mistralApiKeys, openRouterApiKeys } = settings;
+    const { aiProvider, geminiApiKeys, mistralApiKeys, openRouterApiKeys, groqApiKeys } = settings;
 
     // Helper to determine which keys are currently active based on provider selection
     let currentKeys: string[] = [];
@@ -94,6 +95,10 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
         case AIProvider.OPENROUTER:
             currentKeys = openRouterApiKeys;
             currentKeySetter = (keys) => handleSettingChange('openRouterApiKeys', keys);
+            break;
+        case AIProvider.GROQ:
+            currentKeys = groqApiKeys;
+            currentKeySetter = (keys) => handleSettingChange('groqApiKeys', keys);
             break;
     }
 
@@ -138,12 +143,14 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
 
     const truncateKey = (key: string) => `${key.substring(0, 6)}••••••••${key.substring(key.length - 4)}`;
 
+    const isCustomGroq = !GROQ_MODELS.some(m => m.id === settings.groqModel);
+
     return (
         <div className="space-y-6 pb-10">
             {/* AI Engine Selection */}
             <div>
                 <SectionTitle>AI Configuration</SectionTitle>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 xl:grid-cols-4 gap-3 mb-4">
                      <ProviderCard
                         provider={AIProvider.GEMINI}
                         keysCount={geminiApiKeys.length}
@@ -179,9 +186,45 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
                             type="text"
                             value={settings.openRouterModel || "google/gemini-2.0-flash-001"}
                             onChange={(e) => handleSettingChange('openRouterModel', e.target.value)}
-                            placeholder="Model ID (e.g., mistralai/pixtral-12b)"
+                            placeholder="Model ID (e.g., google/gemini-2.0-flash-001)"
                             className="w-full bg-slate-900/80 border border-slate-600/50 text-[10px] text-white rounded p-2 focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 font-medium transition-colors"
                         />
+                    </ProviderCard>
+
+                    <ProviderCard
+                        provider={AIProvider.GROQ}
+                        keysCount={groqApiKeys.length}
+                        isActive={aiProvider === AIProvider.GROQ}
+                        onClick={() => handleSettingChange('aiProvider', AIProvider.GROQ)}
+                    >
+                        <div className="space-y-2">
+                             <select
+                                value={isCustomGroq ? 'custom' : settings.groqModel}
+                                onChange={(e) => {
+                                    if (e.target.value === 'custom') {
+                                        handleSettingChange('groqModel', '');
+                                    } else {
+                                        handleSettingChange('groqModel', e.target.value);
+                                    }
+                                }}
+                                className="w-full bg-slate-900/80 border border-slate-600/50 text-[10px] text-white rounded p-2 focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 font-medium transition-colors"
+                            >
+                                {GROQ_MODELS.map(m => (
+                                    <option key={m.id} value={m.id}>{m.name}</option>
+                                ))}
+                                <option value="custom">Custom / Other...</option>
+                            </select>
+                            
+                            {isCustomGroq && (
+                                <input
+                                    type="text"
+                                    value={settings.groqModel || ""}
+                                    onChange={(e) => handleSettingChange('groqModel', e.target.value)}
+                                    placeholder="Enter Model ID (e.g. llama3-70b-8192)..."
+                                    className="w-full bg-slate-900/80 border border-slate-600/50 text-[10px] text-white rounded p-2 focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 font-medium transition-colors animate-in fade-in zoom-in-95 duration-200"
+                                />
+                            )}
+                        </div>
                     </ProviderCard>
                 </div>
                 

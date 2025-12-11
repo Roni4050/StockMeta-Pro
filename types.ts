@@ -26,6 +26,7 @@ export enum AIProvider {
     GEMINI = "Gemini",
     MISTRAL = "Mistral",
     OPENROUTER = "OpenRouter",
+    GROQ = "Groq",
 }
 
 export enum GeminiModel {
@@ -50,10 +51,12 @@ export interface Settings {
     mistralApiKeys: string[]; // Mistral keys
     geminiApiKeys: string[]; // Gemini keys
     openRouterApiKeys: string[]; // OpenRouter keys
+    groqApiKeys: string[]; // Groq keys
     aiProvider: AIProvider;
     singleGenerationMode: boolean;
     geminiModel: GeminiModel;
     openRouterModel: string;
+    groqModel: string;
 }
 
 export interface ProcessedFile {
@@ -64,8 +67,8 @@ export interface ProcessedFile {
     metadata: {
         title: string;
         description: string;
-        keywords: string[]; // All generated keywords
-        selectedKeywords: string[]; // User-selected keywords
+        keywords: string[];
+        selectedKeywords: string[];
     };
     error?: string;
 }
