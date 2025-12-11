@@ -310,36 +310,43 @@ const App: React.FC = () => {
     const filesToProcessCount = processedFiles.filter(pf => [FileStatus.PENDING, FileStatus.ERROR].includes(pf.status)).length;
 
     return (
-        <div className="flex h-screen bg-slate-950 text-slate-200 font-sans overflow-hidden">
-            <aside className="w-80 lg:w-96 flex-shrink-0 bg-slate-900/90 backdrop-blur-xl border-r border-slate-800 flex flex-col h-full shadow-[5px_0_30px_-10px_rgba(0,0,0,0.5)] z-20">
+        <div className="flex h-screen bg-[#05050A] text-slate-200 font-sans overflow-hidden">
+            {/* Ambient Background Gradient */}
+            <div className="fixed inset-0 pointer-events-none">
+                <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] rounded-full bg-indigo-900/20 blur-[120px] animate-pulse"></div>
+                <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] rounded-full bg-violet-900/20 blur-[120px] animate-pulse" style={{ animationDelay: '2s' }}></div>
+            </div>
+
+            <aside className="w-80 lg:w-96 flex-shrink-0 bg-black/40 backdrop-blur-2xl border-r border-white/5 flex flex-col h-full shadow-2xl z-20 relative">
                 <Header />
-                <div className="flex-grow overflow-y-auto p-5 scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-transparent">
+                <div className="flex-grow overflow-y-auto p-5 scrollbar-thin scrollbar-thumb-white/10 scrollbar-track-transparent">
                     <SettingsPanel settings={settings} setSettings={setSettings} platforms={PLATFORMS} imageTypes={IMAGE_TYPES} />
                 </div>
-                <div className="p-5 bg-slate-900 border-t border-slate-800 space-y-3 shadow-[0_-5px_20px_-5px_rgba(0,0,0,0.3)]">
+                <div className="p-5 bg-black/40 backdrop-blur-xl border-t border-white/5 space-y-3">
                      {isProcessing ? (
-                        <button onClick={handleStopProcessing} className="w-full flex items-center justify-center px-4 py-3 bg-rose-600 hover:bg-rose-500 text-white font-bold rounded-lg shadow-lg shadow-rose-900/30 transition-all transform active:scale-[0.98] border border-white/10">
-                            <span className="mr-2 animate-pulse">●</span> Stop Processing
+                        <button onClick={handleStopProcessing} className="w-full flex items-center justify-center px-4 py-3 bg-rose-600/90 hover:bg-rose-500 text-white font-bold rounded-xl shadow-[0_0_20px_rgba(225,29,72,0.4)] transition-all transform active:scale-[0.98] border border-white/10 group">
+                            <span className="mr-2 animate-pulse w-2 h-2 bg-white rounded-full"></span> 
+                            <span className="group-hover:tracking-wider transition-all">Stop Processing</span>
                         </button>
                      ) : (
-                        <button onClick={handleGenerateAll} disabled={filesToProcessCount === 0 || isUploading} className="w-full flex items-center justify-center px-4 py-3 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white font-bold rounded-lg shadow-lg shadow-indigo-900/30 disabled:opacity-50 disabled:cursor-not-allowed transition-all transform active:scale-[0.98] border border-white/10">
-                            Start Batch Process ({filesToProcessCount})
+                        <button onClick={handleGenerateAll} disabled={filesToProcessCount === 0 || isUploading} className="w-full flex items-center justify-center px-4 py-3 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white font-bold rounded-xl shadow-[0_0_20px_rgba(99,102,241,0.4)] disabled:opacity-50 disabled:cursor-not-allowed transition-all transform active:scale-[0.98] border border-white/10 group">
+                            <span className="group-hover:tracking-wider transition-all">Start Batch Process ({filesToProcessCount})</span>
                         </button>
                      )}
                     <div className="grid grid-cols-2 gap-3">
-                        <button onClick={handleExport} disabled={isProcessing || !processedFiles.some(f => f.status === FileStatus.COMPLETED) || isUploading} className="w-full flex items-center justify-center space-x-2 px-2 py-2.5 text-xs font-bold uppercase tracking-wide bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg shadow-lg shadow-emerald-900/20 disabled:opacity-50 disabled:bg-slate-800 disabled:text-slate-500 transition-all border border-emerald-500/50 hover:border-emerald-400">
-                            <DownloadIcon className="w-4 h-4" /><span>CSV</span>
+                        <button onClick={handleExport} disabled={isProcessing || !processedFiles.some(f => f.status === FileStatus.COMPLETED) || isUploading} className="w-full flex items-center justify-center space-x-2 px-2 py-3 text-xs font-bold uppercase tracking-wide bg-emerald-600/90 hover:bg-emerald-500 text-white rounded-xl shadow-lg shadow-emerald-900/20 disabled:opacity-50 disabled:bg-slate-800 disabled:text-slate-500 transition-all border border-emerald-500/50 hover:border-emerald-400 group">
+                            <DownloadIcon className="w-4 h-4 group-hover:-translate-y-0.5 transition-transform" /><span>CSV</span>
                         </button>
-                        <button onClick={handleExportVectorCsv} disabled={isProcessing || !processedFiles.some(f => f.status === FileStatus.COMPLETED) || isUploading} className="w-full flex items-center justify-center space-x-2 px-2 py-2.5 text-xs font-bold uppercase tracking-wide bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg shadow-lg shadow-emerald-900/20 disabled:opacity-50 disabled:bg-slate-800 disabled:text-slate-500 transition-all border border-emerald-500/50 hover:border-emerald-400">
-                            <ArchiveIcon className="w-4 h-4" /><span>ZIP</span>
+                        <button onClick={handleExportVectorCsv} disabled={isProcessing || !processedFiles.some(f => f.status === FileStatus.COMPLETED) || isUploading} className="w-full flex items-center justify-center space-x-2 px-2 py-3 text-xs font-bold uppercase tracking-wide bg-emerald-600/90 hover:bg-emerald-500 text-white rounded-xl shadow-lg shadow-emerald-900/20 disabled:opacity-50 disabled:bg-slate-800 disabled:text-slate-500 transition-all border border-emerald-500/50 hover:border-emerald-400 group">
+                            <ArchiveIcon className="w-4 h-4 group-hover:-translate-y-0.5 transition-transform" /><span>ZIP</span>
                         </button>
                     </div>
-                    <button onClick={handleClearAll} disabled={processedFiles.length === 0} className="w-full flex items-center justify-center space-x-2 px-4 py-2 text-xs font-bold uppercase tracking-wide text-rose-400 hover:text-white bg-transparent hover:bg-rose-600 border border-rose-900/30 hover:border-rose-500 rounded-lg transition-all disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-rose-400">
+                    <button onClick={handleClearAll} disabled={processedFiles.length === 0} className="w-full flex items-center justify-center space-x-2 px-4 py-2.5 text-xs font-bold uppercase tracking-wide text-rose-400 hover:text-white bg-transparent hover:bg-rose-600/90 border border-rose-900/30 hover:border-rose-500/50 rounded-xl transition-all disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-rose-400">
                         <TrashIcon className="w-4 h-4" /><span>Clear Session</span>
                     </button>
                 </div>
             </aside>
-            <main className="flex-1 h-full overflow-y-auto scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-slate-900 relative bg-gradient-to-br from-slate-950 via-slate-900 to-indigo-950/20">
+            <main className="flex-1 h-full overflow-y-auto scrollbar-thin scrollbar-thumb-white/10 scrollbar-track-transparent relative z-10">
                  <div className="max-w-7xl mx-auto p-6 lg:p-10 pb-32">
                     <FileUpload onFilesChange={handleFilesChange} isUploading={isUploading} />
                     <StatusDashboard files={processedFiles} onClear={handleClearAll} isProcessing={isProcessing} />

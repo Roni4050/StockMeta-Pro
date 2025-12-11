@@ -10,14 +10,14 @@ interface StatusDashboardProps {
 }
 
 const StatCard: React.FC<{ label: string; value: number; colorClass: string; gradientClass: string; icon: React.ReactNode; isPulse?: boolean }> = ({ label, value, colorClass, gradientClass, icon, isPulse }) => (
-    <div className={`relative rounded-xl border border-white/5 p-5 flex flex-col justify-between overflow-hidden backdrop-blur-md transition-all hover:border-white/10 group ${gradientClass}`}>
-        <div className="absolute top-0 right-0 p-4 opacity-10 transform scale-150 transition-transform group-hover:scale-125 group-hover:opacity-20">
+    <div className={`relative rounded-2xl border border-white/5 p-6 flex flex-col justify-between overflow-hidden backdrop-blur-xl transition-all duration-300 hover:scale-[1.02] hover:border-white/10 group shadow-lg ${gradientClass}`}>
+        <div className="absolute -top-6 -right-6 p-4 opacity-10 transform scale-[2] transition-transform group-hover:scale-[2.2] group-hover:rotate-12 duration-500">
             {icon}
         </div>
         <div className="relative z-10">
-            <p className="text-slate-400 text-[10px] uppercase tracking-widest font-bold mb-1 opacity-80">{label}</p>
+            <p className="text-slate-400 text-[10px] uppercase tracking-widest font-bold mb-2 opacity-80">{label}</p>
             <div className="flex items-center space-x-2">
-                <p className={`text-3xl font-black tracking-tight ${colorClass} ${isPulse && value > 0 ? 'animate-pulse' : ''}`}>{value}</p>
+                <p className={`text-4xl font-black tracking-tighter ${colorClass} ${isPulse && value > 0 ? 'animate-pulse' : ''}`}>{value}</p>
             </div>
         </div>
     </div>
@@ -34,19 +34,12 @@ export const StatusDashboard: React.FC<StatusDashboardProps> = ({ files, onClear
     const errorCount = files.filter(f => f.status === FileStatus.ERROR).length;
 
     return (
-        <div className="mb-8">
-            <div className="flex justify-between items-center mb-4">
-                <h2 className="text-sm font-bold text-slate-400 uppercase tracking-widest flex items-center">
-                    <span className="w-1.5 h-1.5 bg-indigo-500 rounded-full mr-2"></span>
+        <div className="mb-10">
+            <div className="flex justify-between items-center mb-5">
+                <h2 className="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center">
+                    <span className="w-1.5 h-1.5 bg-indigo-500 rounded-full mr-2 shadow-[0_0_8px_rgba(99,102,241,0.8)]"></span>
                     Session Overview
                 </h2>
-                <button
-                    onClick={onClear}
-                    className="flex items-center space-x-2 px-3 py-1.5 rounded-lg bg-slate-800/50 hover:bg-rose-950/30 text-slate-400 hover:text-rose-400 border border-slate-700 hover:border-rose-500/30 transition-all disabled:opacity-50 group text-xs font-medium backdrop-blur-sm"
-                >
-                    <TrashIcon />
-                    <span>Clear All</span>
-                </button>
             </div>
             
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -54,29 +47,29 @@ export const StatusDashboard: React.FC<StatusDashboardProps> = ({ files, onClear
                     label="Total Assets" 
                     value={totalFiles} 
                     colorClass="text-white"
-                    gradientClass="bg-slate-800/60 hover:bg-slate-800/80"
+                    gradientClass="bg-gradient-to-br from-slate-800/40 to-slate-900/40"
                     icon={<div className="scale-125"><RefreshIcon/></div>}
                 />
                  <StatCard 
                     label="Processing" 
                     value={processingCount} 
-                    colorClass="text-indigo-300"
-                    gradientClass="bg-indigo-900/20 hover:bg-indigo-900/30 border-indigo-500/20"
+                    colorClass="text-indigo-200"
+                    gradientClass="bg-gradient-to-br from-indigo-900/30 to-slate-900/40 border-indigo-500/20"
                     icon={<RefreshIcon/>}
                     isPulse={isProcessing}
                 />
                  <StatCard 
                     label="Completed" 
                     value={completedCount} 
-                    colorClass="text-emerald-300"
-                    gradientClass="bg-emerald-900/10 hover:bg-emerald-900/20 border-emerald-500/20"
+                    colorClass="text-emerald-200"
+                    gradientClass="bg-gradient-to-br from-emerald-900/20 to-slate-900/40 border-emerald-500/20"
                     icon={<CheckCircleIcon/>}
                 />
                  <StatCard 
                     label="Issues" 
                     value={errorCount} 
-                    colorClass="text-rose-300"
-                    gradientClass="bg-rose-900/10 hover:bg-rose-900/20 border-rose-500/20"
+                    colorClass="text-rose-200"
+                    gradientClass="bg-gradient-to-br from-rose-900/20 to-slate-900/40 border-rose-500/20"
                     icon={<InfoIcon/>}
                 />
             </div>

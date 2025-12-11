@@ -18,13 +18,13 @@ interface FileItemProps {
 const getStatusBadge = (status: FileStatus) => {
     switch (status) {
         case FileStatus.PENDING: 
-            return <span className="bg-slate-800/80 border border-slate-700 text-slate-400 text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider">Pending</span>;
+            return <span className="bg-slate-800/80 text-slate-400 text-[10px] font-bold px-2.5 py-1 rounded-full uppercase tracking-wider border border-white/5">Pending</span>;
         case FileStatus.PROCESSING: 
-            return <span className="bg-indigo-900/30 border border-indigo-500/30 text-indigo-300 text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider flex items-center"><span className="w-1.5 h-1.5 bg-indigo-400 rounded-full mr-1.5 animate-pulse"></span>Processing</span>;
+            return <span className="bg-indigo-500/10 text-indigo-300 text-[10px] font-bold px-2.5 py-1 rounded-full uppercase tracking-wider flex items-center border border-indigo-500/20"><span className="w-1.5 h-1.5 bg-indigo-400 rounded-full mr-2 animate-pulse"></span>Processing</span>;
         case FileStatus.COMPLETED: 
-            return <span className="bg-emerald-900/20 border border-emerald-500/30 text-emerald-400 text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider flex items-center"><span className="w-1.5 h-1.5 bg-emerald-400 rounded-full mr-1.5"></span>Ready</span>;
+            return <span className="bg-emerald-500/10 text-emerald-400 text-[10px] font-bold px-2.5 py-1 rounded-full uppercase tracking-wider flex items-center border border-emerald-500/20"><span className="w-1.5 h-1.5 bg-emerald-400 rounded-full mr-2"></span>Ready</span>;
         case FileStatus.ERROR: 
-            return <span className="bg-rose-900/20 border border-rose-500/30 text-rose-400 text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider">Error</span>;
+            return <span className="bg-rose-500/10 text-rose-400 text-[10px] font-bold px-2.5 py-1 rounded-full uppercase tracking-wider border border-rose-500/20">Error</span>;
         default: return null;
     }
 };
@@ -40,7 +40,7 @@ const CopyButton: React.FC<{ text: string }> = ({ text }) => {
         });
     };
     return (
-        <button onClick={handleCopy} className={`p-1.5 rounded-md hover:bg-slate-700 transition-colors ${copied ? 'text-emerald-400' : 'text-slate-500 hover:text-white'}`} title="Copy to clipboard">
+        <button onClick={handleCopy} className={`p-1.5 rounded-lg hover:bg-white/10 transition-colors ${copied ? 'text-emerald-400' : 'text-slate-500 hover:text-white'}`} title="Copy to clipboard">
             {copied ? <CheckIcon /> : <CopyIcon />}
         </button>
     );
@@ -48,10 +48,10 @@ const CopyButton: React.FC<{ text: string }> = ({ text }) => {
 
 const MetadataInput: React.FC<{ label: string; value: string; onChange: (e: any) => void; onBlur: () => void; rows?: number; count?: number | string }> = ({ label, value, onChange, onBlur, rows=1, count }) => (
     <div className="relative group">
-        <div className="flex justify-between items-end mb-1.5">
-             <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">{label}</label>
+        <div className="flex justify-between items-end mb-2">
+             <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest group-hover:text-indigo-400 transition-colors">{label}</label>
              <div className="flex items-center space-x-2">
-                 {count !== undefined && <span className="text-[10px] text-slate-500 font-mono bg-slate-800/50 px-1.5 rounded">{count}</span>}
+                 {count !== undefined && <span className="text-[10px] text-slate-500 font-mono bg-white/5 px-2 py-0.5 rounded-md border border-white/5">{count}</span>}
                  <CopyButton text={value} />
              </div>
         </div>
@@ -61,7 +61,7 @@ const MetadataInput: React.FC<{ label: string; value: string; onChange: (e: any)
                 onChange={onChange}
                 onBlur={onBlur}
                 rows={rows}
-                className="w-full bg-slate-900/50 border border-slate-700/50 rounded-lg p-3 text-sm text-slate-200 placeholder-slate-600 focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 transition-all resize-none shadow-sm hover:border-slate-600"
+                className="w-full bg-black/20 border-b-2 border-white/5 rounded-lg p-3 text-sm text-slate-200 placeholder-slate-700 focus:bg-black/40 focus:border-indigo-500 focus:ring-0 transition-all resize-none hover:border-white/10"
             />
         ) : (
              <input
@@ -69,7 +69,7 @@ const MetadataInput: React.FC<{ label: string; value: string; onChange: (e: any)
                 value={value}
                 onChange={onChange}
                 onBlur={onBlur}
-                className="w-full bg-slate-900/50 border border-slate-700/50 rounded-lg p-3 text-sm text-slate-200 placeholder-slate-600 focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 transition-all shadow-sm hover:border-slate-600"
+                className="w-full bg-black/20 border-b-2 border-white/5 rounded-lg p-3 text-sm text-slate-200 placeholder-slate-700 focus:bg-black/40 focus:border-indigo-500 focus:ring-0 transition-all hover:border-white/10"
             />
         )}
     </div>
@@ -82,10 +82,12 @@ const PreviewUploader: React.FC<{ onFileSelect: (file: File) => void }> = ({ onF
         if (file) onFileSelect(file);
     };
     return (
-        <div onClick={() => inputRef.current?.click()} className="w-full h-full flex flex-col items-center justify-center bg-slate-800/50 rounded-lg border border-dashed border-slate-600 hover:border-indigo-500 cursor-pointer transition-colors group">
+        <div onClick={() => inputRef.current?.click()} className="w-full h-full flex flex-col items-center justify-center bg-white/5 rounded-xl border border-dashed border-white/10 hover:border-indigo-500/50 hover:bg-white/10 cursor-pointer transition-all group backdrop-blur-sm">
             <input ref={inputRef} type="file" className="hidden" onChange={handleChange} accept="image/jpeg,image/png" />
-            <UploadIcon />
-            <span className="text-[10px] text-slate-500 group-hover:text-indigo-400 mt-2 font-medium">Upload Preview</span>
+            <div className="p-3 bg-black/20 rounded-full mb-2 group-hover:scale-110 transition-transform">
+                <UploadIcon className="text-slate-500 group-hover:text-indigo-400" />
+            </div>
+            <span className="text-[10px] text-slate-500 group-hover:text-white font-medium uppercase tracking-wide">Upload Preview</span>
         </div>
     );
 };
@@ -139,22 +141,25 @@ export const FileItem: React.FC<FileItemProps> = React.memo(({ fileData, onRegen
     const isHD = videoResolution && !is4K && (videoResolution.w >= 1920 || videoResolution.h >= 1920);
 
     return (
-        <div className="bg-slate-800/40 backdrop-blur-sm rounded-xl border border-white/5 shadow-lg overflow-hidden flex flex-col md:flex-row hover:border-white/10 transition-colors group">
+        <div className="bg-white/5 backdrop-blur-xl rounded-2xl border border-white/5 shadow-2xl overflow-hidden flex flex-col md:flex-row hover:border-white/10 transition-all duration-300 group hover:shadow-[0_0_30px_-10px_rgba(0,0,0,0.5)]">
             {/* Visual Column */}
-            <div className="w-full md:w-56 bg-black/20 flex-shrink-0 flex flex-col relative border-b md:border-b-0 md:border-r border-white/5">
-                <div className="flex-1 p-4 flex items-center justify-center">
+            <div className="w-full md:w-64 bg-black/40 flex-shrink-0 flex flex-col relative border-b md:border-b-0 md:border-r border-white/5">
+                <div className="flex-1 p-5 flex items-center justify-center relative overflow-hidden">
+                     {/* Glossy overlay */}
+                     <div className="absolute inset-0 bg-gradient-to-tr from-white/5 to-transparent pointer-events-none z-10"></div>
+                     
                      {isVectorWithoutPreview ? (
-                        <div className="w-full h-40">
+                        <div className="w-full h-40 z-20">
                              <PreviewUploader onFileSelect={(f) => onAddPreview(id, f)} />
                         </div>
                     ) : (
-                        <div className="relative w-full h-full min-h-[160px] rounded-lg overflow-hidden bg-white/5 bg-[url('data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI4IiBoZWlnaHQ9IjgiPjxyZWN0IHdpZHRoPSI4IiBoZWlnaHQ9IjgiIGZpbGw9IiNmZmZmZmYiLz48cmVjdCB3aWR0aD0iNCIgaGVpZ2h0PSI0IiBmaWxsPSIjZTRlNGU0IiAvPjxyZWN0IHg9IjQiIHk9IjQiIHdpZHRoPSI0IiBoZWlnaHQ9IjQiIGZpbGw9IiNlNGU0ZTQiIC8+PC9zdmc+')]">
+                        <div className="relative w-full h-full min-h-[180px] rounded-xl overflow-hidden bg-white/5 shadow-inner border border-white/5 group-hover:scale-[1.02] transition-transform duration-500">
                              {isVideo ? (
                                 <>
                                     <video 
                                         ref={videoRef}
                                         src={preview} 
-                                        className="w-full h-full object-contain" 
+                                        className="w-full h-full object-cover" 
                                         controls 
                                         muted 
                                         playsInline
@@ -162,64 +167,64 @@ export const FileItem: React.FC<FileItemProps> = React.memo(({ fileData, onRegen
                                         onMouseEnter={() => videoRef.current?.play().catch(() => {})}
                                         onMouseLeave={() => videoRef.current?.pause()}
                                     />
-                                    {is4K && <span className="absolute top-2 left-2 bg-black/70 backdrop-blur-md text-amber-400 text-[10px] font-extrabold px-1.5 py-0.5 rounded border border-amber-400/50 shadow-lg z-10">4K UHD</span>}
-                                    {isHD && !is4K && <span className="absolute top-2 left-2 bg-black/70 backdrop-blur-md text-blue-400 text-[10px] font-extrabold px-1.5 py-0.5 rounded border border-blue-400/50 shadow-lg z-10">HD</span>}
+                                    {is4K && <span className="absolute top-2 left-2 bg-black/80 backdrop-blur-md text-amber-400 text-[9px] font-black px-2 py-1 rounded-md border border-amber-500/30 shadow-lg z-30 tracking-widest">4K UHD</span>}
+                                    {isHD && !is4K && <span className="absolute top-2 left-2 bg-black/80 backdrop-blur-md text-blue-400 text-[9px] font-black px-2 py-1 rounded-md border border-blue-500/30 shadow-lg z-30 tracking-widest">HD</span>}
                                 </>
                              ) : (
-                                <img src={preview} className="w-full h-full object-contain" />
+                                <img src={preview} className="w-full h-full object-cover" />
                              )}
                         </div>
                     )}
                 </div>
                 
                 {/* File Info Bar */}
-                <div className="px-4 py-2 bg-slate-900/80 border-t border-white/5 flex justify-between items-center text-[10px] text-slate-500 font-mono">
-                     <span className="truncate max-w-[100px]">{file.name}</span>
-                     <div className="flex items-center space-x-2">
-                        {isVideo && videoResolution && <span>{videoResolution.w}x{videoResolution.h}</span>}
+                <div className="px-5 py-3 bg-black/40 border-t border-white/5 flex justify-between items-center text-[10px] text-slate-400 font-mono backdrop-blur-md">
+                     <span className="truncate max-w-[120px] opacity-70 hover:opacity-100 transition-opacity">{file.name}</span>
+                     <div className="flex items-center space-x-3">
+                        {isVideo && videoResolution && <span className="text-indigo-400">{videoResolution.w}x{videoResolution.h}</span>}
                         <span>{(file.size / 1024).toFixed(0)}KB</span>
                      </div>
                 </div>
                 
                 {/* Overlay Actions */}
-                <div className="absolute top-2 right-2 flex space-x-1 opacity-0 group-hover:opacity-100 transition-all translate-y-2 group-hover:translate-y-0 z-20">
-                    <button onClick={() => onRegenerate(id)} className="p-2 bg-slate-900 text-white rounded-lg shadow-lg hover:bg-indigo-600 transition-colors border border-slate-700" title="Regenerate"><RefreshIcon className="w-4 h-4"/></button>
-                    <button onClick={() => onRemove(id)} className="p-2 bg-slate-900 text-rose-400 rounded-lg shadow-lg hover:bg-rose-900 transition-colors border border-slate-700" title="Remove"><TrashIcon className="w-4 h-4"/></button>
+                <div className="absolute top-3 right-3 flex flex-col space-y-2 opacity-0 group-hover:opacity-100 transition-all translate-x-2 group-hover:translate-x-0 z-30">
+                    <button onClick={() => onRegenerate(id)} className="p-2.5 bg-black/80 text-white rounded-xl shadow-lg hover:bg-indigo-600 transition-colors border border-white/10 backdrop-blur-md" title="Regenerate"><RefreshIcon className="w-4 h-4"/></button>
+                    <button onClick={() => onRemove(id)} className="p-2.5 bg-black/80 text-rose-400 rounded-xl shadow-lg hover:bg-rose-900 transition-colors border border-white/10 backdrop-blur-md" title="Remove"><TrashIcon className="w-4 h-4"/></button>
                 </div>
             </div>
 
             {/* Content Column */}
-            <div className="flex-1 p-6 space-y-5 min-w-0">
+            <div className="flex-1 p-6 space-y-6 min-w-0">
                 <div className="flex justify-between items-start">
                      <div>
-                        <div className="flex items-center space-x-2 mb-1">
+                        <div className="flex items-center space-x-2 mb-2">
                              {getStatusBadge(status)}
-                             {isVideo && <span className="text-[10px] bg-slate-700 text-slate-300 px-1.5 rounded">VIDEO</span>}
+                             {isVideo && <span className="text-[10px] bg-white/10 text-slate-300 px-2 py-0.5 rounded-full border border-white/5">VIDEO</span>}
                         </div>
-                        <h3 className="text-sm font-semibold text-slate-200 truncate max-w-md select-all" title={file.name}>{file.name}</h3>
+                        <h3 className="text-base font-bold text-white truncate max-w-lg select-all tracking-tight" title={file.name}>{file.name}</h3>
                     </div>
                     
                     <button 
                         onClick={() => onRegenerate(id)} 
                         disabled={isProcessing}
-                        className="px-3 py-1.5 text-xs font-medium bg-slate-800 hover:bg-indigo-600 border border-slate-700 text-slate-300 hover:text-white rounded-lg transition-colors disabled:opacity-50 flex items-center shadow-sm"
+                        className="px-4 py-2 text-xs font-bold bg-white/5 hover:bg-indigo-600 border border-white/10 text-slate-300 hover:text-white rounded-xl transition-all disabled:opacity-50 flex items-center shadow-lg hover:shadow-indigo-500/20 active:scale-95"
                     >
-                        <RefreshIcon className="w-3.5 h-3.5 mr-1.5" />
+                        <RefreshIcon className="w-3.5 h-3.5 mr-2" />
                         Regenerate
                     </button>
                 </div>
                 
                 {error && (
-                    <div className="bg-rose-950/30 border border-rose-500/20 p-3 rounded-lg flex items-start space-x-2">
-                        <div className="mt-0.5 text-rose-400"><TrashIcon className="w-4 h-4" /></div>
+                    <div className="bg-rose-950/20 border border-rose-500/20 p-4 rounded-xl flex items-start space-x-3 backdrop-blur-sm">
+                        <div className="mt-0.5 text-rose-400 p-1 bg-rose-900/30 rounded-full"><TrashIcon className="w-4 h-4" /></div>
                         <div>
-                            <p className="text-xs font-bold text-rose-400">Generation Failed</p>
-                            <p className="text-[11px] text-rose-300/80 mt-0.5">{error}</p>
+                            <p className="text-xs font-bold text-rose-400 uppercase tracking-wider">Generation Failed</p>
+                            <p className="text-xs text-rose-300/80 mt-1 leading-relaxed">{error}</p>
                         </div>
                     </div>
                 )}
 
-                <div className="space-y-4">
+                <div className="space-y-6">
                     <MetadataInput 
                         label="Title" 
                         value={localMetadata.title} 
@@ -237,8 +242,8 @@ export const FileItem: React.FC<FileItemProps> = React.memo(({ fileData, onRegen
                             count={`${localMetadata.description.split(/\s+/).filter(Boolean).length} words`}
                         />
                     )}
-                    <div className="pt-2 border-t border-white/5">
-                        <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block mb-2">Keywords</label>
+                    <div className="pt-4 border-t border-white/5">
+                        <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block mb-3">Keywords</label>
                         <KeywordSelector
                             allKeywords={localMetadata.keywords}
                             selectedKeywords={localMetadata.selectedKeywords}
