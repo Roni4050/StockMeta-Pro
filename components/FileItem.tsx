@@ -93,6 +93,8 @@ const PreviewUploader: React.FC<{ onFileSelect: (file: File) => void }> = ({ onF
 export const FileItem: React.FC<FileItemProps> = React.memo(({ fileData, onRegenerate, onRemove, onUpdateMetadata, onAddPreview, isProcessing, platform, maxKeywords }) => {
     const { id, file, preview, status, metadata, error } = fileData;
     const [localMetadata, setLocalMetadata] = useState(metadata);
+    const [videoResolution, setVideoResolution] = useState<{w: number, h: number} | null>(null);
+    const videoRef = useRef<HTMLVideoElement>(null);
 
     useEffect(() => { setLocalMetadata(metadata); }, [metadata]);
 
@@ -107,7 +109,6 @@ export const FileItem: React.FC<FileItemProps> = React.memo(({ fileData, onRegen
     const handleAddKeyword = (keyword: string) => {
         const lowerKeyword = keyword.toLowerCase();
         
-        // 1. Check if it exists in ALL keywords (case-insensitive)
         let existingInAll = localMetadata.keywords.find(k => k.toLowerCase() === lowerKeyword);
         let newAllKeywords = localMetadata.keywords;
         
@@ -116,7 +117,6 @@ export const FileItem: React.FC<FileItemProps> = React.memo(({ fileData, onRegen
             existingInAll = keyword;
         }
 
-        // 2. Check if it exists in SELECTED keywords (case-insensitive)
         const isAlreadySelected = localMetadata.selectedKeywords.some(k => k.toLowerCase() === lowerKeyword);
         let newSelectedKeywords = localMetadata.selectedKeywords;
 
@@ -130,6 +130,14 @@ export const FileItem: React.FC<FileItemProps> = React.memo(({ fileData, onRegen
     const isVideo = file.type.startsWith('video/');
     const isVectorWithoutPreview = !preview && (file.name.toLowerCase().endsWith('.eps') || file.name.toLowerCase().endsWith('.ai'));
 
+    const handleVideoLoad = (e: React.SyntheticEvent<HTMLVideoElement>) => {
+        const v = e.currentTarget;
+        setVideoResolution({ w: v.videoWidth, h: v.videoHeight });
+    };
+
+    const is4K = videoResolution && (videoResolution.w >= 3840 || videoResolution.h >= 3840);
+    const isHD = videoResolution && !is4K && (videoResolution.w >= 1920 || videoResolution.h >= 1920);
+
     return (
         <div className="bg-slate-800/40 backdrop-blur-sm rounded-xl border border-white/5 shadow-lg overflow-hidden flex flex-col md:flex-row hover:border-white/10 transition-colors group">
             {/* Visual Column */}
@@ -140,8 +148,26 @@ export const FileItem: React.FC<FileItemProps> = React.memo(({ fileData, onRegen
                              <PreviewUploader onFileSelect={(f) => onAddPreview(id, f)} />
                         </div>
                     ) : (
-                        <div className="relative w-full h-full min-h-[160px] rounded-lg overflow-hidden bg-[url('data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI4IiBoZWlnaHQ9IjgiPjxyZWN0IHdpZHRoPSI4IiBoZWlnaHQ9IjgiIGZpbGw9IiMxZTI5M2IiLz48cmVjdCB3aWR0aD0iNCIgaGVpZ2h0PSI0IiBmaWxsPSIjM2YzNDQ2IiBmaWxsLW9wYWNpdHk9IjAuMDUiLz48cmVjdCB4PSI0IiB5PSI0IiB3aWR0aD0iNCIgaGVpZ2h0PSI0IiBmaWxsPSIjM2YzNDQ2IiBmaWxsLW9wYWNpdHk9IjAuMDUiLz48L3N2Zz4=')]">
-                             {isVideo ? <video src={preview} className="w-full h-full object-contain" /> : <img src={preview} className="w-full h-full object-contain" />}
+                        <div className="relative w-full h-full min-h-[160px] rounded-lg overflow-hidden bg-white/5 bg-[url('data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI4IiBoZWlnaHQ9IjgiPjxyZWN0IHdpZHRoPSI4IiBoZWlnaHQ9IjgiIGZpbGw9IiNmZmZmZmYiLz48cmVjdCB3aWR0aD0iNCIgaGVpZ2h0PSI0IiBmaWxsPSIjZTRlNGU0IiAvPjxyZWN0IHg9IjQiIHk9IjQiIHdpZHRoPSI0IiBoZWlnaHQ9IjQiIGZpbGw9IiNlNGU0ZTQiIC8+PC9zdmc+')]">
+                             {isVideo ? (
+                                <>
+                                    <video 
+                                        ref={videoRef}
+                                        src={preview} 
+                                        className="w-full h-full object-contain" 
+                                        controls 
+                                        muted 
+                                        playsInline
+                                        onLoadedMetadata={handleVideoLoad}
+                                        onMouseEnter={() => videoRef.current?.play().catch(() => {})}
+                                        onMouseLeave={() => videoRef.current?.pause()}
+                                    />
+                                    {is4K && <span className="absolute top-2 left-2 bg-black/70 backdrop-blur-md text-amber-400 text-[10px] font-extrabold px-1.5 py-0.5 rounded border border-amber-400/50 shadow-lg z-10">4K UHD</span>}
+                                    {isHD && !is4K && <span className="absolute top-2 left-2 bg-black/70 backdrop-blur-md text-blue-400 text-[10px] font-extrabold px-1.5 py-0.5 rounded border border-blue-400/50 shadow-lg z-10">HD</span>}
+                                </>
+                             ) : (
+                                <img src={preview} className="w-full h-full object-contain" />
+                             )}
                         </div>
                     )}
                 </div>
@@ -149,11 +175,14 @@ export const FileItem: React.FC<FileItemProps> = React.memo(({ fileData, onRegen
                 {/* File Info Bar */}
                 <div className="px-4 py-2 bg-slate-900/80 border-t border-white/5 flex justify-between items-center text-[10px] text-slate-500 font-mono">
                      <span className="truncate max-w-[100px]">{file.name}</span>
-                     <span>{(file.size / 1024).toFixed(0)}KB</span>
+                     <div className="flex items-center space-x-2">
+                        {isVideo && videoResolution && <span>{videoResolution.w}x{videoResolution.h}</span>}
+                        <span>{(file.size / 1024).toFixed(0)}KB</span>
+                     </div>
                 </div>
                 
                 {/* Overlay Actions */}
-                <div className="absolute top-2 right-2 flex space-x-1 opacity-0 group-hover:opacity-100 transition-all translate-y-2 group-hover:translate-y-0">
+                <div className="absolute top-2 right-2 flex space-x-1 opacity-0 group-hover:opacity-100 transition-all translate-y-2 group-hover:translate-y-0 z-20">
                     <button onClick={() => onRegenerate(id)} className="p-2 bg-slate-900 text-white rounded-lg shadow-lg hover:bg-indigo-600 transition-colors border border-slate-700" title="Regenerate"><RefreshIcon className="w-4 h-4"/></button>
                     <button onClick={() => onRemove(id)} className="p-2 bg-slate-900 text-rose-400 rounded-lg shadow-lg hover:bg-rose-900 transition-colors border border-slate-700" title="Remove"><TrashIcon className="w-4 h-4"/></button>
                 </div>

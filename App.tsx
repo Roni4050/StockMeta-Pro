@@ -73,7 +73,7 @@ const App: React.FC = () => {
 
         // Supported extensions
         const VECTOR_EXTS = ['.eps', '.ai', '.pdf', '.svg'];
-        const IMAGE_EXTS = ['.jpg', '.jpeg', '.png', '.webp', '.jpj']; // Added .jpj
+        const IMAGE_EXTS = ['.jpg', '.jpeg', '.png', '.webp', '.jpj', '.svg']; // Added .svg here as image
         const VIDEO_EXTS = ['.mp4', '.mov', '.avi', '.webm', '.m4v'];
 
         for (const file of files) {
@@ -110,14 +110,20 @@ const App: React.FC = () => {
             }
             const entry = fileMap.get(base)!;
 
-            if (VECTOR_EXTS.some(ext => name.endsWith(ext))) {
+            if (VECTOR_EXTS.some(ext => name.endsWith(ext)) && !name.endsWith('.svg')) {
+                // Treat non-SVG vectors strictly as source files
                 entry.vector = file;
             } else if (IMAGE_EXTS.some(ext => name.endsWith(ext))) {
-                entry.preview = file;
+                // SVGs can act as both vector source OR preview
+                if (name.endsWith('.svg') && !entry.vector) {
+                     // Temporary assignment, logic below handles if it stays as preview or vector
+                     entry.preview = file;
+                } else {
+                     entry.preview = file;
+                }
             } else if (VIDEO_EXTS.some(ext => name.endsWith(ext))) {
-                entry.others.push(file); // Treat video as standalone
+                entry.others.push(file); 
             } else {
-                // Ignore unsupported files or try to process as standalone if likely media
                 if (file.type.startsWith('image/') || file.type.startsWith('video/')) {
                      entry.others.push(file);
                 }
@@ -138,7 +144,7 @@ const App: React.FC = () => {
                     metadata: { title: '', description: '', keywords: [], selectedKeywords: [] },
                 });
             } 
-            // Case 2: Standalone Preview (JPG/PNG) - if no vector paired, it's a standalone image
+            // Case 2: Standalone Preview (JPG/PNG/SVG) - if no vector paired
             else if (entry.preview) {
                 const fileId = `${entry.preview.name}-${entry.preview.lastModified}-${Math.random()}`;
                 newItems.push({

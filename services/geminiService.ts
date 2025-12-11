@@ -10,27 +10,40 @@ let globalOpenRouterKeyIndex = 0;
 let globalGroqKeyIndex = 0;
 
 /**
- * Helper to safely parse JSON from AI response, handling markdown blocks and extra text.
+ * Helper to safely parse JSON from AI response, handling markdown blocks, newlines, and extra text.
  */
 const parseJSONSafely = (text: string): any => {
+    // 1. Locate the outer JSON object
+    const start = text.indexOf('{');
+    const end = text.lastIndexOf('}');
+    
+    if (start === -1 || end === -1 || start >= end) {
+        throw new Error(`Response does not contain a valid JSON object. Preview: ${text.substring(0, 50)}...`);
+    }
+
+    const jsonStr = text.substring(start, end + 1);
+
     try {
-        let cleanText = text.replace(/```json\s*|```/g, '').trim();
-        return JSON.parse(cleanText);
+        return JSON.parse(jsonStr);
     } catch (e) {
-        const start = text.indexOf('{');
-        const end = text.lastIndexOf('}');
-        if (start !== -1 && end !== -1) {
-            try {
-                const jsonStr = text.substring(start, end + 1);
-                return JSON.parse(jsonStr);
-            } catch (e2) {
-                try {
-                     const fixedStr = text.substring(start, end + 1).replace(/,\s*}/g, '}').replace(/,\s*]/g, ']');
-                     return JSON.parse(fixedStr);
-                } catch(e3) { /* Ignore */ }
-            }
+        // Fallback Strategy for malformed JSON
+        try {
+            let fixed = jsonStr;
+            
+            // 1. Replace literal newlines/tabs with spaces
+            fixed = fixed.replace(/[\n\r\t]/g, ' ');
+            
+            // 2. Remove trailing commas
+            fixed = fixed.replace(/,\s*([}\]])/g, '$1');
+
+            // 3. Attempt to fix markdown code block artifacts if inside
+            fixed = fixed.replace(/```json/g, '').replace(/```/g, '');
+            
+            // 4. Advanced: Attempt to fix unescaped quotes inside values. 
+            return JSON.parse(fixed);
+        } catch (e2) {
+             throw new Error(`Failed to parse JSON. Original Error: ${(e as Error).message}. Content: ${jsonStr.substring(0, 100)}...`);
         }
-        throw new Error(`Failed to parse JSON. Raw output preview: ${text.substring(0, 50)}...`);
     }
 };
 
@@ -52,10 +65,17 @@ const getProcessingConfig = (provider: AIProvider) => {
 const resizeImage = async (url: string, maxDimension: number, quality: number, outputType: string): Promise<{ mimeType: string; data: string }> => {
     return new Promise((resolve, reject) => {
         const img = new Image();
+        img.crossOrigin = "Anonymous"; // Prevent tainted canvas
         img.onload = () => {
             let width = img.width;
             let height = img.height;
             
+            if (width === 0 || height === 0) {
+                // Fallback for SVGs or weird images that didn't load dims
+                width = 1024;
+                height = 1024;
+            }
+
             if (width > maxDimension || height > maxDimension) {
                 const ratio = Math.min(maxDimension / width, maxDimension / height);
                 width *= ratio;
@@ -79,52 +99,66 @@ const resizeImage = async (url: string, maxDimension: number, quality: number, o
                 ctx.clearRect(0, 0, width, height);
             }
             
-            ctx.drawImage(img, 0, 0, width, height);
-            
-            const dataUrl = canvas.toDataURL(outputType, quality);
-            const parts = dataUrl.split(',');
-            if (parts.length < 2) {
-                reject(new Error("Invalid data URL generated during resize"));
-                return;
+            try {
+                ctx.drawImage(img, 0, 0, width, height);
+                const dataUrl = canvas.toDataURL(outputType, quality);
+                const parts = dataUrl.split(',');
+                if (parts.length < 2) {
+                    reject(new Error("Invalid data URL generated during resize"));
+                    return;
+                }
+                resolve({
+                    mimeType: outputType,
+                    data: parts[1]
+                });
+            } catch (err) {
+                reject(new Error("Failed to draw image to canvas (likely tainted or corrupt)."));
             }
-            resolve({
-                mimeType: outputType,
-                data: parts[1]
-            });
         };
-        img.onerror = (e) => reject(new Error("Failed to load image for resizing."));
+        img.onerror = (e) => reject(new Error("Failed to load image for resizing. File may be corrupt."));
         img.src = url;
     });
 };
 
 /**
- * Converts an SVG data URL to a PNG base64 string.
+ * Converts an SVG data URL to a PNG base64 string reliably.
  */
 const convertSvgToPng = (svgDataUrl: string): Promise<string> => {
     return new Promise((resolve, reject) => {
         const img = new Image();
         img.onload = () => {
             const canvas = document.createElement('canvas');
+            // Force a decent resolution for the AI to see details
             const size = 1024; 
             canvas.width = size;
             canvas.height = size;
             const ctx = canvas.getContext('2d');
             if (!ctx) return reject(new Error('Could not get canvas context'));
             
+            // 1. Fill White Background (Crucial for black logos)
             ctx.fillStyle = 'white';
             ctx.fillRect(0, 0, canvas.width, canvas.height);
             
-            const hRatio = canvas.width / img.width;
-            const vRatio = canvas.height / img.height;
+            // 2. Calculate scaling to fit 1024x1024 while maintaining aspect ratio
+            const sourceWidth = img.width || 500;
+            const sourceHeight = img.height || 500;
+            
+            const hRatio = canvas.width / sourceWidth;
+            const vRatio = canvas.height / sourceHeight;
             const ratio = Math.min(hRatio, vRatio);
-            const centerShiftX = (canvas.width - img.width * ratio) / 2;
-            const centerShiftY = (canvas.height - img.height * ratio) / 2;
-            ctx.drawImage(img, 0, 0, img.width, img.height, centerShiftX, centerShiftY, img.width * ratio, img.height * ratio);
+            
+            const renderWidth = sourceWidth * ratio;
+            const renderHeight = sourceHeight * ratio;
+            
+            const centerShiftX = (canvas.width - renderWidth) / 2;
+            const centerShiftY = (canvas.height - renderHeight) / 2;
+            
+            ctx.drawImage(img, 0, 0, sourceWidth, sourceHeight, centerShiftX, centerShiftY, renderWidth, renderHeight);
 
             const pngDataUrl = canvas.toDataURL('image/png');
             resolve(pngDataUrl.split(',')[1]); // Return pure Base64
         };
-        img.onerror = () => reject(new Error('Failed to load SVG image.'));
+        img.onerror = (e) => reject(new Error('Failed to render SVG. The file might be malformed.'));
         img.src = svgDataUrl;
     });
 };
@@ -157,7 +191,7 @@ const extractFramesFromVideo = (videoFile: File, frameCount: number, maxDim: num
             cleanup();
             if (frames.length > 0) resolve(frames);
             else reject(new Error("Video processing timed out."));
-        }, 30000);
+        }, 40000); // Increased timeout for 4K files
 
         video.muted = true;
         video.playsInline = true;
@@ -173,7 +207,6 @@ const extractFramesFromVideo = (videoFile: File, frameCount: number, maxDim: num
 
         video.onloadeddata = async () => {
             try {
-                // Calculate dimensions respecting maxDim
                 let w = video.videoWidth;
                 let h = video.videoHeight;
                 if (w > maxDim || h > maxDim) {
@@ -198,7 +231,7 @@ const extractFramesFromVideo = (videoFile: File, frameCount: number, maxDim: num
                     try {
                         video.currentTime = seekTime;
                         await new Promise<void>((res, rej) => {
-                            const seekTimeout = setTimeout(() => rej(new Error('Seek timeout')), 3000);
+                            const seekTimeout = setTimeout(() => rej(new Error('Seek timeout')), 5000);
                             const onSeeked = () => {
                                 clearTimeout(seekTimeout);
                                 video.removeEventListener('seeked', onSeeked);
@@ -208,7 +241,6 @@ const extractFramesFromVideo = (videoFile: File, frameCount: number, maxDim: num
                         });
 
                         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-                        // Force JPEG for frames
                         const frameDataUrl = canvas.toDataURL('image/jpeg', quality);
                         frames.push({
                             timestamp: seekTime,
@@ -246,7 +278,7 @@ const getPlatformGuidelines = (platform: Platform): string => {
 };
 
 const buildSystemInstruction = (settings: Settings, isVector: boolean, isRaster: boolean, isVideo: boolean, effectiveMinTitleLength: number, effectiveMaxTitleLength: number, targetKeywordCount: number): string => {
-    const { platform, isolatedWhite, isolatedTransparent, imageType, negativeTitleWords, negativeKeywords } = settings;
+    const { platform, isolatedWhite, isolatedTransparent, negativeTitleWords } = settings;
     const guidelines = getPlatformGuidelines(platform);
     
     return `
@@ -254,22 +286,42 @@ const buildSystemInstruction = (settings: Settings, isVector: boolean, isRaster:
     YOUR GOAL: Analyze the media style and content to generate accurate metadata.
     
     ${guidelines}
+
+    VISUAL STYLE ANALYSIS (MANDATORY):
+    Determine the visual style of the image and apply these rules:
     
+    1. **LOGO / ICON / SYMBOL**:
+       - If it looks like a logo, icon, or lettermark, use keywords: "logo, icon, symbol, vector, branding, identity, flat, minimalist".
+       - Title must describe the shape explicitly (e.g., "Minimalist eagle head logo symbol").
+    
+    2. **SILHOUETTE**:
+       - If the subject is black against a light background with no internal detail, it is a "Silhouette".
+       - Use keywords: "silhouette, black, shadow, outline, profile, contrast, backlighting".
+    
+    3. **3D RENDER**:
+       - If it looks CGI, glossy, plastic, or has isometric perspective, it is a "3D Render".
+       - Use keywords: "3d illustration, 3d rendering, cgi, cartoon, plastic, glossy, isometric".
+    
+    4. **VECTOR / FLAT ILLUSTRATION**:
+       - If it looks drawn with clean lines and flat colors, it is a "Vector".
+       - Use keywords: "vector, illustration, flat design, graphic, clip art".
+
     RULES:
     1. Title MUST be strictly BETWEEN ${effectiveMinTitleLength} and ${effectiveMaxTitleLength} characters long (excluding suffixes).
-    2. If the image is simple, add details about style, lighting, concept, or usage to meet the minimum length.
+    2. If the image is simple (like a logo or silhouette), describe the SHAPE, CONCEPT, STYLE, and COLOR to meet the length requirement.
     3. ${isolatedWhite ? "CRITICAL: Image is isolated on WHITE background." : ""}
     4. ${isolatedTransparent ? "CRITICAL: Image is isolated on TRANSPARENT background." : ""}
     5. ${isVideo ? "VIDEO ANALYSIS: Describe motion (panning, zoom, slow-mo). Treat frames as timeline." : ""}
     6. ${isVector ? "VECTOR: Mention 'Vector illustration' or 'Flat design'." : ""}
     7. ${negativeTitleWords ? `FORBIDDEN TITLE WORDS: ${negativeTitleWords}` : ""}
     8. Generate ${targetKeywordCount} STRICTLY SINGLE-WORD keywords.
+    9. FORBIDDEN PHRASE: Do NOT use "realistic illustration". Use "illustration" or "3D render" or "vector" as appropriate.
     
-    OUTPUT JSON ONLY: { "title": "...", "description": "...", "keywords": [...] }
+    OUTPUT JSON ONLY. 
+    CRITICAL: Ensure all strings are properly escaped. Do not use Markdown formatting (no \`\`\`json).
+    Structure: { "title": "...", "description": "...", "keywords": [...] }
     `;
 };
-
-// ... existing sanitizeMetadata, enforceIsolationKeywords, applyModifiers, applyIsolationCasing, processResponseJSON ...
 
 export const generateMetadata = async (processedFile: ProcessedFile, settings: Settings) => {
     const { file, preview } = processedFile;
@@ -282,45 +334,41 @@ export const generateMetadata = async (processedFile: ProcessedFile, settings: S
 
     try {
         if (file.type.startsWith('video/')) {
-            // Video: Extract frames using strict config
             const frames = await extractFramesFromVideo(file, 6, config.maxDim, config.quality); 
             parts = frames.map(frame => ({ inlineData: { mimeType: 'image/jpeg', data: frame.data } }));
         } else if (file.name.match(/\.(eps|ai|pdf)$/i)) {
-            // Vectors/PDF: Use Preview or Render PDF
             if (preview && !preview.startsWith('blob:')) {
-                 // Fetch blob URL
                  const response = await fetch(preview);
                  const blob = await response.blob();
-                 // Resize with strict config
                  const { data, mimeType } = await resizeImage(URL.createObjectURL(blob), config.maxDim, config.quality, config.outputMime);
                  parts = [{ inlineData: { mimeType, data } }];
             } else if (file.type === 'application/pdf') {
-                 // PDF handling (basic)
                  const getBase64 = (f: File) => new Promise<string>((res) => { const r = new FileReader(); r.onload=()=>res((r.result as string).split(',')[1]); r.readAsDataURL(f); });
                  const b64 = await getBase64(file);
-                 // Note: PDF raw is usually fine for Gemini, but for Groq we might need to render it. 
-                 // Assuming PDF is supported natively by the vision model or we fallback. 
-                 // For now, passing PDF as application/pdf usually only works with Gemini. 
-                 // If Groq, we really should have generated a preview image in App.tsx or here.
-                 // Fallback for Groq/Mistral if no preview: Try to treat as image/jpeg if user forced it, otherwise standard PDF.
                  parts = [{ inlineData: { mimeType: 'application/pdf', data: b64 } }];
             } else {
                  if (preview) {
-                     const { data, mimeType } = await resizeImage(preview, config.maxDim, config.quality, config.outputMime);
-                     parts = [{ inlineData: { mimeType, data } }];
+                     if (preview.startsWith('data:image/svg+xml') || file.type === 'image/svg+xml') {
+                         const pngBase64 = await convertSvgToPng(preview);
+                         const dataUrl = `data:image/png;base64,${pngBase64}`;
+                         const { data, mimeType } = await resizeImage(dataUrl, config.maxDim, config.quality, config.outputMime);
+                         parts = [{ inlineData: { mimeType, data } }];
+                     } else {
+                         const { data, mimeType } = await resizeImage(preview, config.maxDim, config.quality, config.outputMime);
+                         parts = [{ inlineData: { mimeType, data } }];
+                     }
                  } else {
-                      throw new Error("Vector file requires a companion JPG/PNG preview.");
+                      throw new Error("Vector file requires a companion JPG/PNG/SVG preview.");
                  }
             }
         } else if (file.type === 'image/svg+xml') {
-            // SVG: Convert to PNG Base64 -> Then Resize/Compress to target config
-            const pngBase64 = await convertSvgToPng(preview || URL.createObjectURL(file));
+            const url = URL.createObjectURL(file);
+            const pngBase64 = await convertSvgToPng(url);
+            URL.revokeObjectURL(url);
             const dataUrl = `data:image/png;base64,${pngBase64}`;
-            // Re-process through resizeImage to ensure maxDim and JPEG format for Groq
             const { data, mimeType } = await resizeImage(dataUrl, config.maxDim, config.quality, config.outputMime);
             parts = [{ inlineData: { mimeType, data } }];
         } else {
-            // Standard Image (JPG, PNG, JPJ, etc): Resize/Compress
             const { mimeType, data } = await resizeImage(preview || URL.createObjectURL(file), config.maxDim, config.quality, config.outputMime);
             parts = [{ inlineData: { mimeType, data } }];
         }
@@ -337,11 +385,8 @@ export const generateMetadata = async (processedFile: ProcessedFile, settings: S
     const userPrefixLength = settings.prefix ? settings.prefix.length + 1 : 0;
     const reservedLength = mandatorySuffixLength + userSuffixLength + userPrefixLength;
     
-    // Calculate precise limits for the model (user setting - suffixes)
     const effectiveMaxTitleLength = Math.max(30, settings.titleLength.max - reservedLength - 2);
-    // Ensure min length is at least 15 to avoid super short titles from model
     const effectiveMinTitleLength = Math.max(15, settings.titleLength.min - reservedLength);
-    
     const targetKeywordCount = settings.maxKeywords + 25;
 
     const isVectorFile = file.name.match(/\.(eps|ai|svg|pdf)$/i) !== null;
@@ -351,7 +396,6 @@ export const generateMetadata = async (processedFile: ProcessedFile, settings: S
 
     const systemPrompt = buildSystemInstruction(settings, (isVectorFile || isVectorMode), isRaster, isVideo, effectiveMinTitleLength, effectiveMaxTitleLength, targetKeywordCount);
     
-    // RE-INLINE HELPER FUNCTIONS FOR CONTEXT
     const enforceIsolationKeywords = (json: any) => {
         if (!json.keywords) json.keywords = [];
         let required: string[] = [];
@@ -384,7 +428,6 @@ export const generateMetadata = async (processedFile: ProcessedFile, settings: S
         return json;
     };
     
-    // Re-implemented sanitizeMetadata here to ensure scope access
     const sanitizeMetadata = (json: any, maxTitleLength: number, isolatedWhite: boolean, isolatedTransparent: boolean): any => {
         if (json.keywords && Array.isArray(json.keywords)) {
             const uniqueWords = new Set<string>();
@@ -397,7 +440,11 @@ export const generateMetadata = async (processedFile: ProcessedFile, settings: S
             });
             json.keywords = Array.from(uniqueWords);
         }
-        const cleanText = (text: string) => text.replace(/digital illustration displaying/gi, "digital illustration of");
+        // Force replace "realistic illustration"
+        const cleanText = (text: string) => text
+            .replace(/digital illustration displaying/gi, "digital illustration of")
+            .replace(/\brealistic illustration\b/gi, "illustration");
+
         if (json.title && typeof json.title === 'string') {
             let title = cleanText(json.title.trim()).replace(/^(Title|Subject|Filename|Caption|Image):\s*/i, "").replace(/^["']|["']$/g, "");
             let mandatorySuffix = "";
@@ -405,7 +452,6 @@ export const generateMetadata = async (processedFile: ProcessedFile, settings: S
             else if (isolatedTransparent) mandatorySuffix = "isolated on transparent background";
 
             if (mandatorySuffix) {
-                // Expanded regex list to catch more variations and partial phrases like "on white"
                 const bgPhrases = [
                     /isolated\s+isolated/gi, 
                     /isolated\s+on\s+(?:a\s+)?(?:clean\s+)?(?:white|transparent)(?:\s+background)?/gi,
@@ -414,15 +460,11 @@ export const generateMetadata = async (processedFile: ProcessedFile, settings: S
                     /\bisolated\b/gi, 
                     /\bwhite\s*background\b/gi,
                     /\btransparent\s*background\b/gi,
-                    // Catch "on white" or "on transparent" at the end of the string
                     /\b(on|over|against)\s+(?:a\s+)?white\s*$/gi,
                     /\b(on|over|against)\s+(?:a\s+)?transparent\s*$/gi
                 ];
                 bgPhrases.forEach(r => { title = title.replace(r, ' '); });
-                
-                // Clean up any dangling prepositions at the end (e.g. "Object on") resulting from removals
                 title = title.replace(/\s+(on|over|against|in|with|at)\s*$/i, "");
-                
                 title = title.replace(/\s{2,}/g, ' ').trim();
             }
 
@@ -453,7 +495,6 @@ export const generateMetadata = async (processedFile: ProcessedFile, settings: S
 
     // --- EXECUTION WITH ROTATION ---
     
-    // Helper to get error message (inline)
     const getErrorMessage = (e: any) => e?.message || String(e);
 
     const callGemini = async () => {
@@ -464,7 +505,6 @@ export const generateMetadata = async (processedFile: ProcessedFile, settings: S
         for (let i = 0; i < attempts; i++) {
             const keyIndex = (globalGeminiKeyIndex + i) % validKeys.length;
             const key = validKeys[keyIndex];
-            
             try {
                 const ai = new GoogleGenAI({ apiKey: key });
                 const modelName = geminiModel || GeminiModel.FLASH;
@@ -489,14 +529,11 @@ export const generateMetadata = async (processedFile: ProcessedFile, settings: S
                         }
                     }
                 });
-
                 const text = response.text;
                 if (!text) throw new Error("Empty response from Gemini");
                 let json = parseJSONSafely(text);
-                
                 globalGeminiKeyIndex = (keyIndex + 1) % validKeys.length;
                 return processResponseJSON(json);
-
             } catch (e: any) {
                 const msg = getErrorMessage(e).toLowerCase();
                 if (msg.includes('429') || msg.includes('quota') || msg.includes('403')) {
@@ -513,7 +550,6 @@ export const generateMetadata = async (processedFile: ProcessedFile, settings: S
         const validKeys = mistralApiKeys.filter(k => k?.trim().length > 0);
         if (!validKeys.length) throw new Error("No Mistral API Key found.");
         
-        // Strict frame limiting for Mistral
         let effectiveParts = parts;
         if (parts.length > 2) {
              effectiveParts = [parts[0], parts[parts.length - 1]];
@@ -543,7 +579,6 @@ export const generateMetadata = async (processedFile: ProcessedFile, settings: S
                     headers: { "Content-Type": "application/json", "Authorization": `Bearer ${key}` },
                     body: JSON.stringify(payload)
                 });
-                
                 if (!res.ok) {
                      if (res.status === 429 || res.status >= 500) continue;
                      const errTxt = await res.text();
@@ -551,10 +586,8 @@ export const generateMetadata = async (processedFile: ProcessedFile, settings: S
                 }
                 const data = await res.json();
                 if (!data.choices?.[0]?.message?.content) throw new Error("Invalid Mistral response");
-                
                 let json = parseJSONSafely(data.choices[0].message.content);
                 if (json.title) json.title = json.title.replace(/^(Title|Subject):\s*/i, "").trim();
-                
                 globalMistralKeyIndex = (keyIndex + 1) % validKeys.length;
                 return processResponseJSON(json);
             } catch (err: any) {
@@ -569,7 +602,6 @@ export const generateMetadata = async (processedFile: ProcessedFile, settings: S
         const validKeys = groqApiKeys.filter(k => k?.trim().length > 0);
         if (!validKeys.length) throw new Error("No Groq API Key found.");
 
-        // GROQ STRICT LIMIT: 1 Frame Only to prevent payload error
         let effectiveParts = parts;
         if (parts.length > 1) {
              const idx = Math.floor(parts.length / 2);
@@ -583,8 +615,6 @@ export const generateMetadata = async (processedFile: ProcessedFile, settings: S
         });
         messagesContent.push({ type: "text", text: systemPrompt + " Output ONLY JSON." });
 
-        // FORCE REPLACE DECOMMISSIONED MODELS
-        // Even if user settings have the old one saved in localStorage, we must upgrade it.
         let modelId = groqModel ? groqModel.trim() : "meta-llama/llama-4-scout-17b-16e-instruct";
         if (modelId === "llama-3.2-11b-vision-preview" || modelId === "llama-3.2-90b-vision-preview") {
              modelId = "meta-llama/llama-4-scout-17b-16e-instruct";
@@ -606,10 +636,37 @@ export const generateMetadata = async (processedFile: ProcessedFile, settings: S
                 });
 
                 if (!res.ok) {
-                     if (res.status === 429 || res.status >= 500) continue; 
-                     const errTxt = await res.text();
-                     throw new Error(`Groq Error ${res.status}: ${errTxt}`);
+                     let errorDetails = await res.text();
+                     let status = res.status;
+                     
+                     try {
+                        const jsonError = JSON.parse(errorDetails);
+                        if (jsonError.error && jsonError.error.message) {
+                            errorDetails = jsonError.error.message;
+                        }
+                     } catch (e) { /* ignore */ }
+
+                     // Rate Limit or Server Error -> Rotate Key
+                     if (status === 429 || status >= 500) {
+                         console.warn(`Groq key ${key.substring(0,6)}... failed with ${status}. Rotating.`);
+                         continue; 
+                     }
+                     
+                     // Bad Request (Usually non-vision model or payload too large)
+                     if (status === 400) {
+                        if (errorDetails.toLowerCase().includes("vision") || errorDetails.toLowerCase().includes("image")) {
+                             throw new Error("The selected Groq model does not support image analysis. Please use a Llama 3.2 Vision model.");
+                        }
+                        throw new Error(`Groq Bad Request: ${errorDetails}`);
+                     }
+
+                     if (status === 413) {
+                         throw new Error("Image payload too large for Groq. Please resize image or try Gemini.");
+                     }
+
+                     throw new Error(`Groq API Error (${status}): ${errorDetails}`);
                 }
+                
                 const data = await res.json();
                 if (!data.choices?.[0]?.message?.content) throw new Error("Invalid Groq response");
 
@@ -619,10 +676,15 @@ export const generateMetadata = async (processedFile: ProcessedFile, settings: S
                 globalGroqKeyIndex = (keyIndex + 1) % validKeys.length;
                 return processResponseJSON(json);
              } catch(err: any) {
+                 // Stop rotation for configuration errors
+                 const msg = err.message || "";
+                 if (msg.includes("does not support image") || msg.includes("payload too large") || msg.includes("Bad Request")) {
+                     throw err;
+                 }
                  if (i === validKeys.length - 1) throw err;
              }
         }
-        throw new Error("Groq failed.");
+        throw new Error("All Groq keys exhausted or rate limited.");
     };
 
     const callOpenRouter = async () => {
@@ -645,8 +707,6 @@ export const generateMetadata = async (processedFile: ProcessedFile, settings: S
         for (let i = 0; i < validKeys.length; i++) {
              const keyIndex = (globalOpenRouterKeyIndex + i) % validKeys.length;
              const key = validKeys[keyIndex];
-             
-             // 401 Fix: Ensure key is trimmed
              const cleanKey = key.trim();
 
              try {
@@ -673,10 +733,8 @@ export const generateMetadata = async (processedFile: ProcessedFile, settings: S
                 }
                 const data = await res.json();
                 if (!data.choices?.[0]?.message?.content) throw new Error("Invalid OpenRouter response");
-                
                 let json = parseJSONSafely(data.choices[0].message.content);
                 if (json.title) json.title = json.title.replace(/^(Title|Subject):\s*/i, "").trim();
-
                 globalOpenRouterKeyIndex = (keyIndex + 1) % validKeys.length;
                 return processResponseJSON(json);
              } catch(err: any) {
