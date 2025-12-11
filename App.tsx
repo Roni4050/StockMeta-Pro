@@ -25,6 +25,10 @@ const App: React.FC = () => {
                 if (parsed.groqModel === "llama-3.2-11b-vision-preview" || parsed.groqModel === "llama-3.2-90b-vision-preview") {
                     parsed.groqModel = "meta-llama/llama-4-scout-17b-16e-instruct";
                 }
+                // MIGRATION: Remove OpenRouter if selected
+                if (parsed.aiProvider === AIProvider.OPENROUTER) {
+                    parsed.aiProvider = AIProvider.GEMINI;
+                }
                 return { ...DEFAULT_SETTINGS, ...parsed };
             }
         } catch (e) {

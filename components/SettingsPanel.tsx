@@ -76,7 +76,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
         setSettings(prev => ({ ...prev, [key]: value }));
     };
 
-    const { aiProvider, geminiApiKeys, mistralApiKeys, openRouterApiKeys, groqApiKeys } = settings;
+    const { aiProvider, geminiApiKeys, mistralApiKeys, groqApiKeys } = settings;
 
     // Helper to determine which keys are currently active based on provider selection
     let currentKeys: string[] = [];
@@ -90,10 +90,6 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
         case AIProvider.MISTRAL:
             currentKeys = mistralApiKeys;
             currentKeySetter = (keys) => handleSettingChange('mistralApiKeys', keys);
-            break;
-        case AIProvider.OPENROUTER:
-            currentKeys = openRouterApiKeys;
-            currentKeySetter = (keys) => handleSettingChange('openRouterApiKeys', keys);
             break;
         case AIProvider.GROQ:
             currentKeys = groqApiKeys;
@@ -174,21 +170,6 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
                         isActive={aiProvider === AIProvider.MISTRAL}
                         onClick={() => handleSettingChange('aiProvider', AIProvider.MISTRAL)}
                     />
-
-                    <ProviderCard
-                        provider={AIProvider.OPENROUTER}
-                        keysCount={openRouterApiKeys.length}
-                        isActive={aiProvider === AIProvider.OPENROUTER}
-                        onClick={() => handleSettingChange('aiProvider', AIProvider.OPENROUTER)}
-                    >
-                         <input
-                            type="text"
-                            value={settings.openRouterModel || "google/gemini-2.0-flash-001"}
-                            onChange={(e) => handleSettingChange('openRouterModel', e.target.value)}
-                            placeholder="Model ID (e.g., google/gemini-2.0-flash-001)"
-                            className="w-full bg-slate-950 border border-white/10 text-[10px] text-white rounded-lg p-2 focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 font-medium transition-colors"
-                        />
-                    </ProviderCard>
 
                     <ProviderCard
                         provider={AIProvider.GROQ}
