@@ -312,10 +312,10 @@ const buildSystemInstruction = (settings: Settings, isVector: boolean, isRaster:
     3. ${isolatedWhite ? "CRITICAL: Image is isolated on WHITE background." : ""}
     4. ${isolatedTransparent ? "CRITICAL: Image is isolated on TRANSPARENT background." : ""}
     5. ${isVideo ? "VIDEO ANALYSIS: Describe motion (panning, zoom, slow-mo). Treat frames as timeline." : ""}
-    6. ${isVector ? "VECTOR: Mention 'Vector illustration' or 'Flat design'." : ""}
+    6. ${isVector ? "VECTOR: Use words like 'illustration' or 'flat design'." : ""}
     7. ${negativeTitleWords ? `FORBIDDEN TITLE WORDS: ${negativeTitleWords}` : ""}
     8. Generate ${targetKeywordCount} STRICTLY SINGLE-WORD keywords.
-    9. FORBIDDEN PHRASE: Do NOT use "realistic illustration". Use "illustration" or "3D render" or "vector" as appropriate.
+    9. FORBIDDEN PHRASES: Do NOT use "realistic illustration" or "Vector illustration". Use "illustration" or "3D render" or "flat vector" as appropriate, but never combine "Vector" and "illustration" in that exact sequence in the title/description.
     
     OUTPUT JSON ONLY. 
     CRITICAL: Ensure all strings are properly escaped. Do not use Markdown formatting (no \`\`\`json).
@@ -325,7 +325,7 @@ const buildSystemInstruction = (settings: Settings, isVector: boolean, isRaster:
 
 export const generateMetadata = async (processedFile: ProcessedFile, settings: Settings) => {
     const { file, preview } = processedFile;
-    const { aiProvider, geminiApiKeys, mistralApiKeys, openRouterApiKeys, groqApiKeys, geminiModel, openRouterModel, groqModel } = settings;
+    const { aiProvider, geminiApiKeys, mistralApiKeys, groqApiKeys, geminiModel, groqModel } = settings;
 
     // 1. DETERMINE PROCESSING CONFIG (Resolves Payload/Bad Request Issues)
     const config = getProcessingConfig(aiProvider);
@@ -440,10 +440,11 @@ export const generateMetadata = async (processedFile: ProcessedFile, settings: S
             });
             json.keywords = Array.from(uniqueWords);
         }
-        // Force replace "realistic illustration"
+        // Force replace "realistic illustration" and "Vector illustration"
         const cleanText = (text: string) => text
             .replace(/digital illustration displaying/gi, "digital illustration of")
-            .replace(/\brealistic illustration\b/gi, "illustration");
+            .replace(/\brealistic illustration\b/gi, "illustration")
+            .replace(/\bVector illustration\b/gi, "illustration");
 
         if (json.title && typeof json.title === 'string') {
             let title = cleanText(json.title.trim()).replace(/^(Title|Subject|Filename|Caption|Image):\s*/i, "").replace(/^["']|["']$/g, "");
@@ -687,68 +688,11 @@ export const generateMetadata = async (processedFile: ProcessedFile, settings: S
         throw new Error("All Groq keys exhausted or rate limited.");
     };
 
-    const callOpenRouter = async () => {
-        const validKeys = openRouterApiKeys.filter(k => k?.trim().length > 0);
-        if (!validKeys.length) throw new Error("No OpenRouter API Key.");
-        
-        let effectiveParts = parts;
-        if (parts.length > 4) {
-             effectiveParts = [parts[0], parts[Math.floor(parts.length/2)], parts[parts.length-1]];
-             effectiveParts = Array.from(new Set(effectiveParts));
-        }
-
-        const messagesContent: any[] = [];
-        effectiveParts.forEach(p => {
-            const url = `data:${p.inlineData.mimeType};base64,${p.inlineData.data}`;
-            messagesContent.push({ type: "image_url", image_url: { url } });
-        });
-        messagesContent.push({ type: "text", text: systemPrompt + " Output ONLY JSON." });
-
-        for (let i = 0; i < validKeys.length; i++) {
-             const keyIndex = (globalOpenRouterKeyIndex + i) % validKeys.length;
-             const key = validKeys[keyIndex];
-             const cleanKey = key.trim();
-
-             try {
-                const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-                    method: "POST",
-                    headers: { 
-                        "Content-Type": "application/json", 
-                        "Authorization": `Bearer ${cleanKey}`,
-                        "HTTP-Referer": window.location.origin || "http://localhost:3000", 
-                        "X-Title": "Stock Metadata Generator"
-                    },
-                    body: JSON.stringify({
-                        model: openRouterModel || "google/gemini-2.0-flash-001",
-                        messages: [{ role: "user", content: messagesContent }],
-                        temperature: 0.7,
-                        response_format: { type: "json_object" }
-                    })
-                });
-
-                if (!res.ok) {
-                     if (res.status === 429 || res.status >= 500) continue;
-                     const errTxt = await res.text();
-                     throw new Error(`OpenRouter Error ${res.status}: ${errTxt}`);
-                }
-                const data = await res.json();
-                if (!data.choices?.[0]?.message?.content) throw new Error("Invalid OpenRouter response");
-                let json = parseJSONSafely(data.choices[0].message.content);
-                if (json.title) json.title = json.title.replace(/^(Title|Subject):\s*/i, "").trim();
-                globalOpenRouterKeyIndex = (keyIndex + 1) % validKeys.length;
-                return processResponseJSON(json);
-             } catch(err: any) {
-                 if (i === validKeys.length - 1) throw err;
-             }
-        }
-        throw new Error("OpenRouter failed.");
-    };
-
     return retryWithBackoff(async () => {
         if (aiProvider === AIProvider.GEMINI) return await callGemini();
         if (aiProvider === AIProvider.MISTRAL) return await callMistral();
         if (aiProvider === AIProvider.GROQ) return await callGroq();
-        return await callOpenRouter();
+        throw new Error("Invalid provider");
     }, 3, 2000, (error) => {
         const msg = getErrorMessage(error).toLowerCase();
         return msg.includes('429') || msg.includes('quota') || msg.includes('503') || msg.includes('500');
