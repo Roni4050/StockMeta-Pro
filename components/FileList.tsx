@@ -1,3 +1,4 @@
+
 import React from 'react';
 import { ProcessedFile, Platform } from '../types';
 import { FileItem } from './FileItem';
@@ -6,14 +7,14 @@ interface FileListProps {
     files: ProcessedFile[];
     onRegenerate: (id: string) => void;
     onRemove: (id: string) => void;
-    onUpdateMetadata: (id: string, newMetadata: Partial<ProcessedFile['metadata']>) => void;
+    onUpdateFile: (id: string, updates: Partial<ProcessedFile>) => void;
     onAddPreview: (id: string, previewFile: File) => void;
     isProcessing: boolean;
     platform: Platform;
     maxKeywords: number;
 }
 
-export const FileList: React.FC<FileListProps> = ({ files, onRegenerate, onRemove, onUpdateMetadata, onAddPreview, isProcessing, platform, maxKeywords }) => {
+export const FileList: React.FC<FileListProps> = ({ files, onRegenerate, onRemove, onUpdateFile, onAddPreview, isProcessing, platform, maxKeywords }) => {
     if (files.length === 0) {
         return (
             <div className="text-center py-20 bg-gray-800/30 rounded-lg">
@@ -30,7 +31,7 @@ export const FileList: React.FC<FileListProps> = ({ files, onRegenerate, onRemov
                     fileData={file}
                     onRegenerate={onRegenerate}
                     onRemove={onRemove}
-                    onUpdateMetadata={onUpdateMetadata}
+                    onUpdateFile={onUpdateFile}
                     onAddPreview={onAddPreview}
                     isProcessing={isProcessing}
                     platform={platform}

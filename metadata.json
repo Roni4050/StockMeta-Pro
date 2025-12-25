@@ -1,5 +1,5 @@
 {
-  "name": "Stock Metadata Generator",
-  "description": "A powerful tool to bulk-generate SEO-optimized titles, descriptions, and keywords for stock assets (images, vectors, videos) using AI. Customize metadata for various platforms like Adobe Stock, Shutterstock, and more, and export everything as a CSV file.",
+  "name": "StockMeta Pro",
+  "description": "Professional-grade neural metadata engine for stock asset management. Features platform-specific SEO optimization for Adobe Stock, Shutterstock, and more. Optimized for bulk processing with multi-node API rotation and deep visual analysis.",
   "requestFramePermissions": []
 }

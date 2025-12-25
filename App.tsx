@@ -5,359 +5,254 @@ import { FileUpload } from './components/FileUpload';
 import { FileList } from './components/FileList';
 import { Header } from './components/Header';
 import { StatusDashboard } from './components/StatusDashboard';
+import { ApiVault } from './components/ApiVault';
 import { generateMetadata } from './services/geminiService';
-import { exportToCsv, exportVectorZip } from './services/csvService';
+import { exportToCsv, exportAdobeStockZip } from './services/csvService';
 import { processWithConcurrency } from './services/apiUtils';
-import { ProcessedFile, Settings, FileStatus, AIProvider, ImageType } from './types';
-import { PLATFORMS, IMAGE_TYPES, DEFAULT_SETTINGS } from './constants';
-import { TrashIcon, DownloadIcon, ArchiveIcon } from './components/icons';
-
-const CONCURRENCY_LIMIT = 2; 
-const INTER_REQUEST_DELAY_MS = 2000;
+import { ProcessedFile, Settings, FileStatus, ImageType, AssetStyle, ApiKey, AIProvider } from './types';
+import { PLATFORMS, DEFAULT_SETTINGS } from './constants';
+import { TrashIcon, DownloadIcon, ArchiveIcon, RefreshIcon } from './components/icons';
 
 const App: React.FC = () => {
     const [settings, setSettings] = useState<Settings>(() => {
         try {
-            const savedSettings = localStorage.getItem('metadataGeneratorSettings');
-            if (savedSettings) {
-                const parsed = JSON.parse(savedSettings);
-                // MIGRATION: Auto-update decommissioned or legacy Groq models to new Llama 4 Scout
-                if (parsed.groqModel === "llama-3.2-11b-vision-preview" || parsed.groqModel === "llama-3.2-90b-vision-preview") {
-                    parsed.groqModel = "meta-llama/llama-4-scout-17b-16e-instruct";
-                }
-                // MIGRATION: Remove OpenRouter if selected
-                if (parsed.aiProvider === AIProvider.OPENROUTER) {
-                    parsed.aiProvider = AIProvider.GEMINI;
-                }
-                return { ...DEFAULT_SETTINGS, ...parsed };
-            }
-        } catch (e) {
-            console.error("Could not load settings from localStorage", e);
-        }
+            const saved = localStorage.getItem('metadataGeneratorSettings');
+            if (saved) return { ...DEFAULT_SETTINGS, ...JSON.parse(saved) };
+        } catch (e) {}
         return DEFAULT_SETTINGS;
     });
 
+    const [isVaultOpen, setIsVaultOpen] = useState(false);
     const settingsRef = useRef(settings);
+    
     useEffect(() => {
         settingsRef.current = settings;
-        try {
-            localStorage.setItem('metadataGeneratorSettings', JSON.stringify(settings));
-        } catch(e) {
-             console.error("Could not save settings to localStorage", e);
-        }
+        localStorage.setItem('metadataGeneratorSettings', JSON.stringify(settings));
     }, [settings]);
 
     const [processedFiles, setProcessedFiles] = useState<ProcessedFile[]>([]);
     const [isProcessing, setIsProcessing] = useState(false);
     const [isUploading, setIsUploading] = useState(false);
-    
-    // Ref to control processing loop stop
     const stopProcessingRef = useRef(false);
-    
     const processedFilesRef = useRef(processedFiles);
-    useEffect(() => {
-        processedFilesRef.current = processedFiles;
-    }, [processedFiles]);
+    
+    useEffect(() => { processedFilesRef.current = processedFiles; }, [processedFiles]);
 
-    useEffect(() => {
-        return () => {
-            processedFilesRef.current.forEach(pf => {
-                if (pf.preview && pf.preview.startsWith('blob:')) {
-                    URL.revokeObjectURL(pf.preview);
-                }
-            });
-        };
+    const handleKeyStatusUpdate = useCallback((provider: AIProvider, keyId: string, status: ApiKey['status']) => {
+        setSettings(prev => ({
+            ...prev,
+            providerKeys: {
+                ...prev.providerKeys,
+                [provider]: prev.providerKeys[provider].map(k => 
+                    k.id === keyId ? { ...k, status } : k
+                )
+            }
+        }));
     }, []);
 
+    const handleUpdateKeys = useCallback((provider: AIProvider, keys: ApiKey[]) => {
+        setSettings(prev => ({
+            ...prev,
+            providerKeys: {
+                ...prev.providerKeys,
+                [provider]: keys
+            }
+        }));
+    }, []);
 
     const handleFilesChange = useCallback(async (files: File[]) => {
         setIsUploading(true);
-        let hasVector = false;
-        let hasLogo = false;
-
-        // Supported extensions
-        const VECTOR_EXTS = ['.eps', '.ai', '.pdf', '.svg'];
-        const IMAGE_EXTS = ['.jpg', '.jpeg', '.png', '.webp', '.jpj', '.svg']; // Added .svg here as image
-        const VIDEO_EXTS = ['.mp4', '.mov', '.avi', '.webm', '.m4v'];
-
-        for (const file of files) {
-             const n = file.name.toLowerCase();
-             if (VECTOR_EXTS.some(ext => n.endsWith(ext))) {
-                 hasVector = true;
-                 if (n.includes('logo')) {
-                     hasLogo = true;
-                     break; 
-                 }
-             }
-        }
-
-        if (hasLogo) {
-            setSettings(prev => ({ ...prev, imageType: ImageType.LOGO }));
-        } else if (hasVector) {
-            setSettings(prev => {
-                if (prev.imageType === ImageType.LOGO) return prev;
-                return { ...prev, imageType: ImageType.VECTOR };
-            });
-        }
+        const IMAGE_EXTS = ['.jpg', '.jpeg', '.png', '.webp', '.jpj'];
         
-        await new Promise(resolve => setTimeout(resolve, 50));
+        const newItems: ProcessedFile[] = files.map(file => ({
+            id: `${file.name}-${Date.now()}-${Math.random()}`,
+            file,
+            preview: (IMAGE_EXTS.some(ext => file.name.toLowerCase().endsWith(ext)) || file.type.startsWith('video/')) ? URL.createObjectURL(file) : '',
+            status: FileStatus.PENDING,
+            metadata: { title: '', description: '', keywords: [], selectedKeywords: [] },
+        }));
 
-        const fileMap = new Map<string, { vector?: File; preview?: File; others: File[] }>();
-        const getBaseName = (name: string) => name.substring(0, name.lastIndexOf('.')).toLowerCase();
-
-        for (const file of files) {
-            const name = file.name.toLowerCase();
-            const base = getBaseName(file.name);
-            
-            if (!fileMap.has(base)) {
-                fileMap.set(base, { others: [] });
-            }
-            const entry = fileMap.get(base)!;
-
-            if (VECTOR_EXTS.some(ext => name.endsWith(ext)) && !name.endsWith('.svg')) {
-                // Treat non-SVG vectors strictly as source files
-                entry.vector = file;
-            } else if (IMAGE_EXTS.some(ext => name.endsWith(ext))) {
-                // SVGs can act as both vector source OR preview
-                if (name.endsWith('.svg') && !entry.vector) {
-                     // Temporary assignment, logic below handles if it stays as preview or vector
-                     entry.preview = file;
-                } else {
-                     entry.preview = file;
-                }
-            } else if (VIDEO_EXTS.some(ext => name.endsWith(ext))) {
-                entry.others.push(file); 
-            } else {
-                if (file.type.startsWith('image/') || file.type.startsWith('video/')) {
-                     entry.others.push(file);
-                }
-            }
-        }
-
-        const newItems: ProcessedFile[] = [];
-        
-        for (const [baseName, entry] of fileMap.entries()) {
-            // Case 1: Vector file (optionally with preview)
-            if (entry.vector) {
-                const fileId = `${entry.vector.name}-${entry.vector.lastModified}-${Math.random()}`;
-                newItems.push({
-                    id: fileId,
-                    file: entry.vector,
-                    preview: entry.preview ? URL.createObjectURL(entry.preview) : '',
-                    status: FileStatus.PENDING,
-                    metadata: { title: '', description: '', keywords: [], selectedKeywords: [] },
-                });
-            } 
-            // Case 2: Standalone Preview (JPG/PNG/SVG) - if no vector paired
-            else if (entry.preview) {
-                const fileId = `${entry.preview.name}-${entry.preview.lastModified}-${Math.random()}`;
-                newItems.push({
-                    id: fileId,
-                    file: entry.preview,
-                    preview: URL.createObjectURL(entry.preview),
-                    status: FileStatus.PENDING,
-                    metadata: { title: '', description: '', keywords: [], selectedKeywords: [] },
-                });
-            }
-
-            // Case 3: Videos and other standalone files
-            entry.others.forEach(otherFile => {
-                const fileId = `${otherFile.name}-${otherFile.lastModified}-${Math.random()}`;
-                newItems.push({
-                    id: fileId,
-                    file: otherFile,
-                    preview: URL.createObjectURL(otherFile),
-                    status: FileStatus.PENDING,
-                    metadata: { title: '', description: '', keywords: [], selectedKeywords: [] },
-                });
-            });
-        }
-
-        const BATCH_SIZE = 50;
-        for (let i = 0; i < newItems.length; i += BATCH_SIZE) {
-            const batch = newItems.slice(i, i + BATCH_SIZE);
-            setProcessedFiles(prev => [...prev, ...batch]);
-            await new Promise(resolve => setTimeout(resolve, 10));
-        }
-
+        setProcessedFiles(prev => [...prev, ...newItems]);
         setIsUploading(false);
-    }, []);
-    
-    // ... existing handlers (handleAddPreview, updateFileMetadata, removeFile, processFile) ...
-
-    const handleAddPreview = useCallback((id: string, previewFile: File) => {
-        setProcessedFiles(prev =>
-            prev.map(pf => {
-                if (pf.id === id) {
-                    if (pf.preview.startsWith('blob:')) {
-                        URL.revokeObjectURL(pf.preview);
-                    }
-                    return { ...pf, preview: URL.createObjectURL(previewFile) };
-                }
-                return pf;
-            })
-        );
-    }, []);
-
-    const updateFileMetadata = useCallback((id: string, newMetadata: Partial<ProcessedFile['metadata']>) => {
-        setProcessedFiles(prev =>
-            prev.map(pf => pf.id === id ? { ...pf, metadata: { ...pf.metadata, ...newMetadata } } : pf)
-        );
-    }, []);
-
-    const removeFile = useCallback((id: string) => {
-        setProcessedFiles(prev => {
-            const fileToRemove = prev.find(pf => pf.id === id);
-            if (fileToRemove && fileToRemove.preview.startsWith('blob:')) {
-                URL.revokeObjectURL(fileToRemove.preview);
-            }
-            return prev.filter(pf => pf.id !== id);
-        });
     }, []);
 
     const processFile = useCallback(async (fileId: string) => {
         if (stopProcessingRef.current) return;
-        const fileToProcess = processedFilesRef.current.find(f => f.id === fileId);
-        if (!fileToProcess) return;
+        const target = processedFilesRef.current.find(f => f.id === fileId);
+        if (!target) return;
 
         setProcessedFiles(prev => prev.map(pf => pf.id === fileId ? { ...pf, status: FileStatus.PROCESSING, error: undefined } : pf));
 
         try {
-            const newMetadata = await generateMetadata(fileToProcess, settingsRef.current);
-            const fullMetadata = {
-                title: newMetadata.title,
-                description: newMetadata.description,
-                keywords: newMetadata.keywords,
-                selectedKeywords: newMetadata.keywords.slice(0, settingsRef.current.maxKeywords),
-            };
+            const result = await generateMetadata(target, settingsRef.current, handleKeyStatusUpdate);
+            const finalTitle = `${settingsRef.current.titlePrefix}${result.title}${settingsRef.current.titleSuffix}`.trim();
 
-            setProcessedFiles(prev => prev.map(pf => pf.id === fileId ? { ...pf, status: FileStatus.COMPLETED, metadata: fullMetadata, error: undefined } : pf));
-        } catch (error) {
-            console.error('Error generating metadata:', error);
-            const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
-            setProcessedFiles(prev => prev.map(pf => pf.id === fileId ? { ...pf, status: FileStatus.ERROR, error: errorMessage } : pf));
+            setProcessedFiles(prev => prev.map(pf => pf.id === fileId ? { 
+                ...pf, 
+                status: FileStatus.COMPLETED, 
+                style: result.style as AssetStyle,
+                metadata: { 
+                    ...result, 
+                    title: finalTitle,
+                    selectedKeywords: result.keywords.slice(0, settingsRef.current.maxKeywords) 
+                }, 
+                error: undefined 
+            } : pf));
+        } catch (error: any) {
+            setProcessedFiles(prev => prev.map(pf => pf.id === fileId ? { ...pf, status: FileStatus.ERROR, error: error.message } : pf));
         }
-    }, []);
+    }, [handleKeyStatusUpdate]);
 
     const handleGenerateAll = async () => {
         if (isProcessing) return;
         stopProcessingRef.current = false;
-        
-        const updatedFiles = processedFiles.map(pf => pf.status === FileStatus.ERROR ? { ...pf, status: FileStatus.PENDING, error: undefined } : pf);
-        const pendingFileIds = updatedFiles.filter(pf => pf.status === FileStatus.PENDING).map(pf => pf.id);
+        const pending = processedFiles.filter(pf => pf.status !== FileStatus.COMPLETED).map(pf => pf.id);
 
-        if (pendingFileIds.length > 0) {
-            setProcessedFiles(updatedFiles);
+        if (pending.length > 0) {
             setIsProcessing(true);
-
-            const processWrapper = async (id: string) => {
-                if (stopProcessingRef.current) return;
-                await processFile(id);
-            };
-
-            if (settings.singleGenerationMode) {
-                for (const id of pendingFileIds) {
-                    if (stopProcessingRef.current) break;
-                    if (!processedFilesRef.current.some(f => f.id === id)) break; 
-                    await processWrapper(id);
-                    if (!stopProcessingRef.current) await new Promise(resolve => setTimeout(resolve, INTER_REQUEST_DELAY_MS));
-                }
-            } else {
-                await processWithConcurrency(pendingFileIds, processWrapper, CONCURRENCY_LIMIT, INTER_REQUEST_DELAY_MS);
-            }
-            
+            const concurrency = settings.aiProvider === AIProvider.GEMINI ? 2 : 5; 
+            const delay = settings.safeMode ? 2000 : 200;
+            await processWithConcurrency(pending, processFile, concurrency, delay);
             setIsProcessing(false);
-            stopProcessingRef.current = false;
         }
     };
-    
-    const handleStopProcessing = () => {
-        stopProcessingRef.current = true;
-        setIsProcessing(false);
-    };
-    
-    const handleRegenerate = useCallback(async (id: string) => {
-      if (isProcessing) return;
-      setIsProcessing(true);
-      stopProcessingRef.current = false;
-      await processFile(id);
-      setIsProcessing(false);
-    }, [isProcessing, processFile]);
 
-    const handleExport = () => {
-        const completedFiles = processedFiles.filter(pf => pf.status === FileStatus.COMPLETED);
-        if (completedFiles.length > 0) exportToCsv(completedFiles, settings.platform);
-        else alert('No completed files with metadata to export.');
-    };
-
-    const handleExportVectorCsv = () => {
-        const completedFiles = processedFiles.filter(pf => pf.status === FileStatus.COMPLETED);
-        if (completedFiles.length > 0) exportVectorZip(completedFiles, settings.platform);
-        else alert('No completed files with metadata to export.');
-    };
-    
-    const handleClearAll = useCallback(() => {
-        const files = processedFilesRef.current;
-        if (files.length === 0) return;
-        if (window.confirm('Are you sure you want to clear all uploaded files? This action cannot be undone.')) {
+    const handlePurge = () => {
+        if (confirm("Reset current session data? All processing will stop immediately.")) {
             stopProcessingRef.current = true;
-            files.forEach(pf => {
-                if (pf.preview && pf.preview.startsWith('blob:')) URL.revokeObjectURL(pf.preview);
-            });
-            processedFilesRef.current = []; 
-            setProcessedFiles([]);
             setIsProcessing(false);
-            setIsUploading(false);
+            setProcessedFiles([]);
+            // Revoke URLs to free memory
+            processedFiles.forEach(f => {
+                if (f.preview.startsWith('blob:')) URL.revokeObjectURL(f.preview);
+            });
         }
-    }, []);
-    
-    const filesToProcessCount = processedFiles.filter(pf => [FileStatus.PENDING, FileStatus.ERROR].includes(pf.status)).length;
+    };
+
+    const pendingCount = processedFiles.filter(pf => pf.status !== FileStatus.COMPLETED).length;
 
     return (
-        <div className="flex h-screen bg-[#05050A] text-slate-200 font-sans overflow-hidden">
-            {/* Ambient Background Gradient */}
-            <div className="fixed inset-0 pointer-events-none">
-                <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] rounded-full bg-indigo-900/20 blur-[120px] animate-pulse"></div>
-                <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] rounded-full bg-violet-900/20 blur-[120px] animate-pulse" style={{ animationDelay: '2s' }}></div>
-            </div>
+        <div className="min-h-screen bg-[#050608] text-slate-300 font-sans selection:bg-indigo-500/30 overflow-x-hidden">
+            <Header onOpenVault={() => setIsVaultOpen(true)} />
+            
+            {isVaultOpen && (
+                <ApiVault 
+                    settings={settings} 
+                    onUpdateKeys={handleUpdateKeys} 
+                    onClose={() => setIsVaultOpen(false)} 
+                />
+            )}
 
-            <aside className="w-80 lg:w-96 flex-shrink-0 bg-black/40 backdrop-blur-2xl border-r border-white/5 flex flex-col h-full shadow-2xl z-20 relative">
-                <Header />
-                <div className="flex-grow overflow-y-auto p-5 scrollbar-thin scrollbar-thumb-white/10 scrollbar-track-transparent">
-                    <SettingsPanel settings={settings} setSettings={setSettings} platforms={PLATFORMS} imageTypes={IMAGE_TYPES} />
-                </div>
-                <div className="p-5 bg-black/40 backdrop-blur-xl border-t border-white/5 space-y-3">
-                     {isProcessing ? (
-                        <button onClick={handleStopProcessing} className="w-full flex items-center justify-center px-4 py-3 bg-rose-600/90 hover:bg-rose-500 text-white font-bold rounded-xl shadow-[0_0_20px_rgba(225,29,72,0.4)] transition-all transform active:scale-[0.98] border border-white/10 group">
-                            <span className="mr-2 animate-pulse w-2 h-2 bg-white rounded-full"></span> 
-                            <span className="group-hover:tracking-wider transition-all">Stop Processing</span>
-                        </button>
-                     ) : (
-                        <button onClick={handleGenerateAll} disabled={filesToProcessCount === 0 || isUploading} className="w-full flex items-center justify-center px-4 py-3 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white font-bold rounded-xl shadow-[0_0_20px_rgba(99,102,241,0.4)] disabled:opacity-50 disabled:cursor-not-allowed transition-all transform active:scale-[0.98] border border-white/10 group">
-                            <span className="group-hover:tracking-wider transition-all">Start Batch Process ({filesToProcessCount})</span>
-                        </button>
-                     )}
-                    <div className="grid grid-cols-2 gap-3">
-                        <button onClick={handleExport} disabled={isProcessing || !processedFiles.some(f => f.status === FileStatus.COMPLETED) || isUploading} className="w-full flex items-center justify-center space-x-2 px-2 py-3 text-xs font-bold uppercase tracking-wide bg-emerald-600/90 hover:bg-emerald-500 text-white rounded-xl shadow-lg shadow-emerald-900/20 disabled:opacity-50 disabled:bg-slate-800 disabled:text-slate-500 transition-all border border-emerald-500/50 hover:border-emerald-400 group">
-                            <DownloadIcon className="w-4 h-4 group-hover:-translate-y-0.5 transition-transform" /><span>CSV</span>
-                        </button>
-                        <button onClick={handleExportVectorCsv} disabled={isProcessing || !processedFiles.some(f => f.status === FileStatus.COMPLETED) || isUploading} className="w-full flex items-center justify-center space-x-2 px-2 py-3 text-xs font-bold uppercase tracking-wide bg-emerald-600/90 hover:bg-emerald-500 text-white rounded-xl shadow-lg shadow-emerald-900/20 disabled:opacity-50 disabled:bg-slate-800 disabled:text-slate-500 transition-all border border-emerald-500/50 hover:border-emerald-400 group">
-                            <ArchiveIcon className="w-4 h-4 group-hover:-translate-y-0.5 transition-transform" /><span>ZIP</span>
-                        </button>
+            <main className="max-w-[1600px] mx-auto px-6 py-12">
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 items-start">
+                    
+                    {/* LEFT SIDEBAR: CONFIGURATION */}
+                    <aside className="lg:col-span-3 space-y-8 lg:sticky lg:top-32">
+                        <section className="bg-[#0A0B0E] border border-white/[0.05] rounded-[2.5rem] p-8 shadow-2xl relative overflow-hidden group">
+                            <div className="absolute top-0 right-0 w-48 h-48 bg-indigo-600/[0.03] blur-[80px] rounded-full pointer-events-none group-hover:bg-indigo-600/[0.07] transition-all duration-1000"></div>
+                            <SettingsPanel 
+                                settings={settings} 
+                                setSettings={setSettings} 
+                                platforms={PLATFORMS} 
+                                onOpenVault={() => setIsVaultOpen(true)}
+                            />
+                        </section>
+
+                        <section className="space-y-5">
+                            {/* PREMIUM ACTION BUTTON: GENERATE */}
+                            <button 
+                                onClick={handleGenerateAll} 
+                                disabled={isProcessing || processedFiles.length === 0}
+                                className="w-full relative overflow-hidden group/btn px-8 py-7 bg-gradient-to-br from-indigo-600 via-indigo-500 to-indigo-700 hover:scale-[1.03] active:scale-[0.97] disabled:scale-100 disabled:opacity-30 disabled:grayscale text-white text-[15px] font-black rounded-[2.5rem] transition-all shadow-[0_30px_90px_-20px_rgba(79,70,229,0.5)] uppercase tracking-[0.3em] flex items-center justify-center gap-4 border border-white/20"
+                            >
+                                <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent -translate-x-full group-hover/btn:animate-[shimmer_1s_infinite]"></div>
+                                {isProcessing ? (
+                                    <>
+                                        <div className="w-5 h-5 border-[3.5px] border-white/20 border-t-white rounded-full animate-spin"></div>
+                                        <span>Analyzing...</span>
+                                    </>
+                                ) : (
+                                    <>
+                                        <RefreshIcon className="w-6 h-6 text-white group-hover/btn:rotate-180 transition-transform duration-1000" />
+                                        <span>Generate All ({pendingCount})</span>
+                                    </>
+                                )}
+                            </button>
+
+                            {/* EXPORT OPTIONS: CSV & BUNDLE */}
+                            <div className="flex flex-col gap-3.5">
+                                <button 
+                                    onClick={() => exportToCsv(processedFiles, settings.platform)} 
+                                    disabled={processedFiles.length === 0 || isProcessing}
+                                    className="w-full py-5 bg-[#0D0F12] hover:bg-[#14171C] text-slate-300 border border-white/[0.1] hover:border-indigo-500/40 rounded-[2rem] font-black text-[12px] uppercase tracking-[0.25em] disabled:opacity-20 transition-all flex items-center justify-center gap-3.5 active:scale-[0.98] group/export shadow-xl"
+                                >
+                                    <DownloadIcon className="w-5 h-5 text-indigo-400 group-hover/export:translate-y-1 transition-transform"/> 
+                                    Download CSV
+                                </button>
+                                <button 
+                                    onClick={() => exportAdobeStockZip(processedFiles)} 
+                                    disabled={processedFiles.length === 0 || isProcessing}
+                                    className="w-full py-5 bg-emerald-500/5 hover:bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-[2rem] font-black text-[12px] uppercase tracking-[0.25em] disabled:opacity-20 transition-all flex items-center justify-center gap-3.5 active:scale-[0.98] group/bundle shadow-xl"
+                                >
+                                    <ArchiveIcon className="w-5 h-5 text-emerald-500/80 group-hover/bundle:scale-110 transition-transform"/> 
+                                    Adobe Stock Zip
+                                </button>
+                            </div>
+
+                            {/* DELETE ALL / PURGE ACTION */}
+                            {processedFiles.length > 0 && (
+                                <button 
+                                    onClick={handlePurge} 
+                                    className="w-full py-3 mt-6 bg-transparent text-slate-700 hover:text-rose-500 transition-all font-black text-[11px] uppercase tracking-[0.45em] flex items-center justify-center gap-3 group/purge"
+                                >
+                                    <TrashIcon className="w-4.5 h-4.5 opacity-40 group-hover/purge:opacity-100 transition-all"/> 
+                                    Reset Workspace
+                                </button>
+                            )}
+                        </section>
+                    </aside>
+
+                    {/* MAIN CONTENT AREA */}
+                    <div className="lg:col-span-9 space-y-12">
+                        {/* UPLOAD ZONE */}
+                        <section className="bg-black/40 rounded-[3.5rem] border border-white/[0.03] p-1.5 shadow-[0_40px_100px_-30px_rgba(0,0,0,0.5)]">
+                            <FileUpload onFilesChange={handleFilesChange} isUploading={isUploading} />
+                        </section>
+
+                        {/* TELEMETRY / STATUS */}
+                        <section className="px-4">
+                             <StatusDashboard files={processedFiles} onClear={() => setProcessedFiles([])} isProcessing={isProcessing} />
+                        </section>
+                        
+                        {/* ASSET LISTING */}
+                        {processedFiles.length > 0 && (
+                            <section className="space-y-10">
+                                <div className="flex items-center gap-8 px-6">
+                                    <div className="flex items-center gap-3.5">
+                                        <div className="w-3 h-3 rounded-full bg-indigo-500 shadow-[0_0_20px_rgba(99,102,241,0.7)]"></div>
+                                        <h2 className="text-[14px] font-black text-slate-300 uppercase tracking-[0.5em]">Workstream Pipeline</h2>
+                                    </div>
+                                    <div className="h-[1px] bg-gradient-to-r from-white/[0.1] via-white/[0.05] to-transparent flex-grow"></div>
+                                    <p className="text-[10px] font-black text-slate-600 uppercase tracking-[0.2em]">{processedFiles.length} ACTIVE ASSETS</p>
+                                </div>
+                                
+                                <FileList 
+                                    files={processedFiles} 
+                                    onRegenerate={processFile} 
+                                    onRemove={(id) => setProcessedFiles(p => p.filter(f => f.id !== id))} 
+                                    onUpdateFile={(id, updates) => setProcessedFiles(p => p.map(f => f.id === id ? {...f, ...updates} : f))} 
+                                    onAddPreview={(id, f) => setProcessedFiles(p => p.map(pf => pf.id === id ? {...pf, preview: URL.createObjectURL(f)} : pf))} 
+                                    isProcessing={isProcessing} 
+                                    platform={settings.platform} 
+                                    maxKeywords={settings.maxKeywords} 
+                                />
+                            </section>
+                        )}
                     </div>
-                    <button onClick={handleClearAll} disabled={processedFiles.length === 0} className="w-full flex items-center justify-center space-x-2 px-4 py-2.5 text-xs font-bold uppercase tracking-wide text-rose-400 hover:text-white bg-transparent hover:bg-rose-600/90 border border-rose-900/30 hover:border-rose-500/50 rounded-xl transition-all disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-rose-400">
-                        <TrashIcon className="w-4 h-4" /><span>Clear Session</span>
-                    </button>
                 </div>
-            </aside>
-            <main className="flex-1 h-full overflow-y-auto scrollbar-thin scrollbar-thumb-white/10 scrollbar-track-transparent relative z-10">
-                 <div className="max-w-7xl mx-auto p-6 lg:p-10 pb-32">
-                    <FileUpload onFilesChange={handleFilesChange} isUploading={isUploading} />
-                    <StatusDashboard files={processedFiles} onClear={handleClearAll} isProcessing={isProcessing} />
-                    <FileList files={processedFiles} onRegenerate={handleRegenerate} onRemove={removeFile} onUpdateMetadata={updateFileMetadata} onAddPreview={handleAddPreview} isProcessing={isProcessing} platform={settings.platform} maxKeywords={settings.maxKeywords} />
-                 </div>
             </main>
         </div>
     );
 };
+
 export default App;

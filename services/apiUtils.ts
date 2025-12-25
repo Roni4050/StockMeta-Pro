@@ -1,11 +1,6 @@
 
-
 /**
  * Processes an array of items with a limited number of concurrent async operations.
- * @param items The array of items to process.
- * @param asyncFn The async function to apply to each item.
- * @param limit The concurrency limit.
- * @param delayMs Optional delay in milliseconds to wait between starting item processing (throttle).
  */
 export const processWithConcurrency = async <T, R>(
   items: T[],
@@ -29,25 +24,27 @@ export const processWithConcurrency = async <T, R>(
       .then(result => {
         results[itemIndex] = result;
       })
+      .catch(err => {
+        console.error(`Error processing item ${itemIndex}:`, err);
+      })
       .finally(async () => {
         activePromises.delete(promise);
-        // Throttle the start of the next item in the queue
         if (delayMs > 0) {
              await new Promise(resolve => setTimeout(resolve, delayMs));
         }
-        queueNext();
+        await queueNext();
       });
     
     activePromises.add(promise);
   };
 
-  // Start the initial batch.
   const initialPromises = [];
-  for (let i = 0; i < Math.min(limit, items.length); i++) {
+  const initialBatchCount = Math.min(limit, items.length);
+  
+  for (let i = 0; i < initialBatchCount; i++) {
       initialPromises.push(queueNext());
-      // Stagger the start of initial batch as well if needed
-      if (limit > 1 && delayMs > 0) {
-           await new Promise(resolve => setTimeout(resolve, delayMs));
+      if (initialBatchCount > 1 && delayMs > 0) {
+           await new Promise(resolve => setTimeout(resolve, delayMs / initialBatchCount));
       }
   }
   
@@ -62,24 +59,25 @@ export const processWithConcurrency = async <T, R>(
 
 /**
  * Retries an async function with exponential backoff.
- * @param asyncFn The async function to retry.
- * @param retries Maximum number of retries.
- * @param delay Initial delay in ms.
- * @param shouldRetry A function to determine if an error is retryable.
  */
 export const retryWithBackoff = async <T>(
     asyncFn: () => Promise<T>,
     retries = 3,
     delay = 2000,
-    shouldRetry: (error: any) => boolean = () => true
+    shouldRetry: (error: any) => boolean = (err) => {
+        // Retry on 429 (Rate limit) and 500+ (Server error)
+        const status = err?.status;
+        return status === 429 || status >= 500 || !status;
+    }
 ): Promise<T> => {
     try {
         return await asyncFn();
-    } catch (error) {
+    } catch (error: any) {
         if (retries > 0 && shouldRetry(error)) {
-            console.warn(`Attempt failed. Retrying in ${delay}ms... (${retries} retries left)`);
-            await new Promise(res => setTimeout(res, delay));
-            return retryWithBackoff(asyncFn, retries - 1, delay * 2, shouldRetry);
+            const nextDelay = error?.status === 429 ? delay * 3 : delay * 2;
+            console.warn(`Retry attempt triggered. Backing off for ${nextDelay}ms... (${retries} left)`);
+            await new Promise(res => setTimeout(res, nextDelay));
+            return retryWithBackoff(asyncFn, retries - 1, nextDelay, shouldRetry);
         } else {
             throw error;
         }

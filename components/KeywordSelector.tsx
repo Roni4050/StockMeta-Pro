@@ -12,47 +12,26 @@ interface KeywordSelectorProps {
 
 export const KeywordSelector: React.FC<KeywordSelectorProps> = ({ allKeywords, selectedKeywords, onChange, onAddKeyword, maxKeywords }) => {
     const [inputValue, setInputValue] = useState('');
-    const [selectTopCount, setSelectTopCount] = useState(Math.min(50, maxKeywords));
     const [copied, setCopied] = useState(false);
 
-    useEffect(() => {
-        setSelectTopCount(prev => Math.min(prev, maxKeywords));
-    }, [maxKeywords]);
-
-    // Derived state for quick lookup, ensuring case-insensitive uniqueness check
     const selectedLowerSet = new Set(selectedKeywords.map(k => k.toLowerCase()));
-    
-    // Accurate unique count
-    const count = selectedLowerSet.size;
-    const atLimit = count >= maxKeywords;
+    const atLimit = selectedKeywords.length >= maxKeywords;
 
     const handleKeywordToggle = (keyword: string) => {
         const lowerKey = keyword.toLowerCase();
         const isSelected = selectedLowerSet.has(lowerKey);
         
-        let newSelected: string[];
         if (isSelected) {
-            // Remove matching keys
-            newSelected = selectedKeywords.filter(k => k.toLowerCase() !== lowerKey);
-        } else {
-            if (!atLimit) {
-                // Add new key, ensuring we don't duplicate visually if backend didn't clean it
-                const cleanExisting = selectedKeywords.filter(k => k.toLowerCase() !== lowerKey);
-                newSelected = [...cleanExisting, keyword];
-            } else {
-                return; 
-            }
+            onChange(selectedKeywords.filter(k => k.toLowerCase() !== lowerKey));
+        } else if (!atLimit) {
+            onChange([...selectedKeywords, keyword]);
         }
-        onChange(newSelected);
     };
     
     const handleAddCustomKeyword = () => {
-        const trimmedValue = inputValue.trim();
-        const lowerValue = trimmedValue.toLowerCase();
-        
-        // Check valid, not present (normalized), not limit
-        if (trimmedValue && !selectedLowerSet.has(lowerValue) && !atLimit) {
-            onAddKeyword(trimmedValue);
+        const trimmed = inputValue.trim();
+        if (trimmed && !selectedLowerSet.has(trimmed.toLowerCase()) && !atLimit) {
+            onAddKeyword(trimmed);
             setInputValue('');
         }
     };
@@ -65,144 +44,97 @@ export const KeywordSelector: React.FC<KeywordSelectorProps> = ({ allKeywords, s
     };
 
     const handleSelectTop = () => {
-        const limit = Math.min(selectTopCount, maxKeywords);
-        
-        // Create unique list from allKeywords
-        const uniqueAll = new Set<string>();
-        const result: string[] = [];
-        
-        for (const k of allKeywords) {
-            if (result.length >= limit) break;
-            const lower = k.toLowerCase();
-            if (!uniqueAll.has(lower)) {
-                uniqueAll.add(lower);
-                result.push(k);
-            }
-        }
-        
-        onChange(result);
-    };
-
-    const handleClearSelection = () => {
-        onChange([]);
-    };
-
-    const handleSelectTopCountChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        const value = parseInt(e.target.value, 10);
-        if (isNaN(value)) {
-             setSelectTopCount(1);
-             return;
-        }
-        setSelectTopCount(Math.max(1, Math.min(value, maxKeywords)));
+        const uniqueAll = Array.from(new Set(allKeywords));
+        onChange(uniqueAll.slice(0, maxKeywords));
     };
 
     const handleCopyKeywords = () => {
         if (selectedKeywords.length === 0) return;
-        const text = selectedKeywords.join(', ');
-        navigator.clipboard.writeText(text).then(() => {
+        navigator.clipboard.writeText(selectedKeywords.join(', ')).then(() => {
             setCopied(true);
             setTimeout(() => setCopied(false), 2000);
         });
     };
 
     return (
-        <div>
-            <div className="flex flex-wrap justify-between items-center mb-3 gap-2">
-                {/* Left side: Controls */}
-                <div className="flex items-center space-x-2">
-                    <div className="flex items-center">
-                         <input
-                            type="number"
-                            value={selectTopCount}
-                            onChange={handleSelectTopCountChange}
-                            min="1"
-                            max={maxKeywords}
-                            className="w-14 h-8 bg-black/20 border border-white/10 text-white rounded-l-lg text-center text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500 transition-colors [-moz-appearance:_textfield] [&::-webkit-outer-spin-button]:m-0 [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:m-0 [&::-webkit-inner-spin-button]:appearance-none"
-                        />
+        <div className="space-y-6">
+            {/* CONTROL BAR */}
+            <div className="flex flex-wrap items-center justify-between gap-4">
+                <div className="flex items-center gap-2">
+                    <div className="bg-[#1A1A1B] border border-white/5 rounded-lg px-4 py-1.5 text-[12px] font-black text-white">
+                        {selectedKeywords.length}
+                    </div>
+                    <div className="flex rounded-lg overflow-hidden border border-white/5">
                         <button
                             onClick={handleSelectTop}
-                            disabled={allKeywords.length === 0}
-                            className="px-3 h-8 text-xs font-bold bg-white/5 text-slate-300 rounded-r-lg hover:bg-white/10 hover:text-white disabled:opacity-50 disabled:cursor-not-allowed transition-all border border-l-0 border-white/10"
-                            title={`Select the first ${selectTopCount} unique keywords`}
+                            className="px-4 py-2 bg-[#1A1A1B] hover:bg-[#252526] text-[11px] font-bold text-slate-300 border-r border-white/5 transition-all"
                         >
                             Select Top
                         </button>
+                        <button
+                            onClick={() => onChange([])}
+                            className="px-4 py-2 bg-[#1A1A1B] hover:bg-[#252526] text-[11px] font-bold text-slate-300 border-r border-white/5 transition-all"
+                        >
+                            Clear
+                        </button>
+                        <button
+                            onClick={handleCopyKeywords}
+                            className="px-4 py-2 bg-[#1A1A1B] hover:bg-[#252526] text-[11px] font-bold text-slate-300 transition-all flex items-center gap-2"
+                        >
+                            {copied ? <CheckIcon className="w-3 h-3 text-emerald-400" /> : <CopyIcon className="w-3 h-3" />}
+                            Copy
+                        </button>
                     </div>
-
-                    <button
-                        onClick={handleClearSelection}
-                        disabled={selectedKeywords.length === 0}
-                        className="px-3 h-8 text-xs font-bold bg-white/5 text-slate-300 rounded-lg hover:bg-white/10 hover:text-white disabled:opacity-50 disabled:cursor-not-allowed transition-all border border-white/10"
-                        title="Deselect all keywords"
-                    >
-                        Clear
-                    </button>
-                     <button
-                        onClick={handleCopyKeywords}
-                        disabled={selectedKeywords.length === 0}
-                        className={`px-3 h-8 text-xs font-bold rounded-lg transition-all flex items-center space-x-1.5 border ${
-                            copied 
-                                ? 'bg-emerald-600/20 text-emerald-400 border-emerald-500/30' 
-                                : 'bg-white/5 text-slate-300 hover:text-white hover:bg-white/10 border-white/10 disabled:opacity-50 disabled:cursor-not-allowed'
-                        }`}
-                        title="Copy selected keywords as comma-separated list"
-                    >
-                        {copied ? <CheckIcon className="w-3.5 h-3.5" /> : <CopyIcon className="w-3.5 h-3.5" />}
-                        <span>{copied ? 'Copied' : 'Copy'}</span>
-                    </button>
                 </div>
 
-                {/* Right side: Status */}
-                <div className="text-xs text-gray-400 font-medium text-right flex-shrink-0 ml-auto flex items-center space-x-2">
-                    <span className={`px-2.5 py-1 rounded-md text-[10px] font-bold ${atLimit ? 'bg-amber-900/30 text-amber-500 border border-amber-500/30' : 'bg-white/5 text-slate-400 border border-white/5'}`}>
-                        {count} / {maxKeywords}
-                    </span>
+                <div className="text-[11px] font-mono text-slate-500 bg-black/40 px-3 py-1 rounded-lg border border-white/5">
+                    {selectedKeywords.length} / {maxKeywords}
                 </div>
             </div>
 
-            <div className="w-full bg-black/20 border border-white/5 rounded-xl p-3 text-sm min-h-[76px]">
+            {/* KEYWORD CHIPS CONTAINER */}
+            <div className="flex flex-wrap gap-2 min-h-[120px] p-1">
                 {allKeywords.length > 0 ? (
-                    <div className="flex flex-wrap gap-2">
-                        {allKeywords.map(keyword => {
-                            const isSelected = selectedLowerSet.has(keyword.toLowerCase());
-                            const isDisabled = !isSelected && atLimit;
-                            return (
-                                <button
-                                    key={keyword}
-                                    onClick={() => handleKeywordToggle(keyword)}
-                                    disabled={isDisabled}
-                                    className={`px-2.5 py-1 text-[11px] font-medium rounded-md transition-all select-none border ${
-                                        isSelected 
-                                            ? 'bg-indigo-600 text-white border-indigo-500 shadow-md shadow-indigo-900/20 hover:bg-indigo-500' 
-                                            : 'bg-white/5 text-slate-300 border-transparent hover:bg-white/10 hover:border-white/10'
-                                    } ${isDisabled ? 'opacity-30 cursor-not-allowed' : ''}`}
-                                >
-                                    {keyword}
-                                </button>
-                            );
-                        })}
-                    </div>
+                    allKeywords.map(keyword => {
+                        const isSelected = selectedLowerSet.has(keyword.toLowerCase());
+                        const isDisabled = !isSelected && atLimit;
+                        return (
+                            <button
+                                key={keyword}
+                                onClick={() => handleKeywordToggle(keyword)}
+                                disabled={isDisabled}
+                                className={`px-4 py-2 text-[12px] font-bold rounded-lg border transition-all ${
+                                    isSelected 
+                                        ? 'bg-indigo-600 text-white border-indigo-500 shadow-lg shadow-indigo-900/20 hover:bg-indigo-500' 
+                                        : 'bg-[#1A1A1B] text-slate-400 border-white/5 hover:border-indigo-500/30'
+                                } ${isDisabled ? 'opacity-20 cursor-not-allowed' : ''}`}
+                            >
+                                {keyword}
+                            </button>
+                        );
+                    })
                 ) : (
-                    <div className="flex items-center justify-center h-full text-slate-600 italic text-xs" style={{minHeight: '52px'}}>
-                        No keywords generated yet.
+                    <div className="w-full flex items-center justify-center text-slate-700 italic text-[12px]">
+                        Analyzing visual features for metadata extraction...
                     </div>
                 )}
             </div>
 
-            <div className="flex items-center space-x-2 mt-3">
+            {/* CUSTOM INPUT */}
+            <div className="flex gap-2 pt-2 border-t border-white/5">
                 <input
                     type="text"
                     value={inputValue}
                     onChange={(e) => setInputValue(e.target.value)}
                     onKeyDown={handleKeyDown}
                     placeholder="Add custom keyword..."
-                    className="flex-grow bg-black/20 border border-white/10 rounded-lg p-2 text-xs text-white placeholder-slate-600 focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 transition-colors disabled:opacity-50"
+                    className="flex-1 bg-[#121213] border border-white/5 rounded-xl px-5 py-3 text-[13px] text-white placeholder-slate-700 focus:ring-1 focus:ring-indigo-500/20"
                     disabled={atLimit}
                 />
                 <button
                     onClick={handleAddCustomKeyword}
                     disabled={atLimit || !inputValue.trim()}
-                    className="px-4 py-2 text-xs font-bold bg-indigo-600 text-white rounded-lg hover:bg-indigo-500 disabled:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-lg shadow-indigo-900/20"
+                    className="px-6 py-3 bg-[#1A1A1B] hover:bg-[#252526] text-white text-[12px] font-black rounded-xl border border-white/5 disabled:opacity-50 transition-all uppercase tracking-widest"
                 >
                     Add
                 </button>

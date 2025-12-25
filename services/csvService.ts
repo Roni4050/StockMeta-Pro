@@ -10,7 +10,6 @@ const convertToCsv = (data: ProcessedFile[], platform: Platform, filenameTransfo
     const getFilename = (file: File) => filenameTransformer ? filenameTransformer(file.name) : file.name;
     const escape = (str: string) => `"${(str || '').replace(/"/g, '""')}"`;
 
-    // Platform-specific headers and row mapping
     switch (platform) {
         case Platform.SHUTTERSTOCK:
             headers = ["Filename", "Description", "Keywords", "Categories", "Editorial", "R-Rated", "Location"];
@@ -18,10 +17,10 @@ const convertToCsv = (data: ProcessedFile[], platform: Platform, filenameTransfo
                 getFilename(item.file),
                 escape(`${item.metadata.title}. ${item.metadata.description}`),
                 escape(item.metadata.selectedKeywords.join(', ')),
-                "", // Categories
-                "false", // Editorial
-                "false", // R-Rated
-                "", // Location
+                "", 
+                "false", 
+                "false", 
+                "", 
             ]);
             break;
         case Platform.ADOBE_STOCK:
@@ -30,19 +29,10 @@ const convertToCsv = (data: ProcessedFile[], platform: Platform, filenameTransfo
                 getFilename(item.file),
                 escape(item.metadata.title),
                 escape(item.metadata.selectedKeywords.join(', ')),
-                "", // Category is optional, left empty
+                item.metadata.category || "8", // Default to 8 (Graphic Resources)
             ]);
             break;
-        case Platform.TEMPLATE_MONSTER:
-            headers = ["Filename", "Title", "Description", "Keywords"];
-            rows = data.map(item => [
-                getFilename(item.file),
-                escape(item.metadata.title),
-                escape(item.metadata.description),
-                escape(item.metadata.selectedKeywords.join(', ')),
-            ]);
-            break;
-        default: // General, Freepik, Vecteezy, Pond5
+        default:
             headers = ["Filename", "Title", "Description", "Keywords"];
             rows = data.map(item => [
                 getFilename(item.file),
@@ -54,17 +44,11 @@ const convertToCsv = (data: ProcessedFile[], platform: Platform, filenameTransfo
 
     const headerString = headers.join(',');
     const rowStrings = rows.map(row => row.join(',')).join('\n');
-
-    // Add Byte Order Mark (BOM) to ensure UTF-8 is correctly recognized by Excel/Adobe
     return `\uFEFF${headerString}\n${rowStrings}`;
 };
 
 export const exportToCsv = (data: ProcessedFile[], platform: Platform) => {
-    if (data.length === 0) {
-        alert("No data to export.");
-        return;
-    }
-    
+    if (data.length === 0) return;
     try {
         const csvString = convertToCsv(data, platform);
         const blob = new Blob([csvString], { type: 'text/csv;charset=utf-8;' });
@@ -72,58 +56,48 @@ export const exportToCsv = (data: ProcessedFile[], platform: Platform) => {
         const url = URL.createObjectURL(blob);
         link.setAttribute("href", url);
         const platformName = platform.toLowerCase().replace(/\s+/g, '-');
-        link.setAttribute("download", `metadata-export-${platformName}-${new Date().toISOString().slice(0,10)}.csv`);
+        link.setAttribute("download", `metadata-${platformName}-${new Date().toISOString().slice(0,10)}.csv`);
         link.style.visibility = 'hidden';
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
+        URL.revokeObjectURL(url);
     } catch (error) {
         console.error("Failed to export CSV:", error);
-        alert("An error occurred while creating the CSV file.");
     }
 };
 
-export const exportVectorZip = async (data: ProcessedFile[], platform: Platform) => {
-    if (data.length === 0) {
-        alert("No data to export.");
-        return;
-    }
-
-    if (typeof JSZip === 'undefined') {
-        alert("JSZip library is not loaded. Please refresh the page.");
+export const exportAdobeStockZip = async (data: ProcessedFile[]) => {
+    if (data.length === 0 || typeof JSZip === 'undefined') {
+        console.error("Missing data or JSZip library");
         return;
     }
 
     try {
         const zip = new JSZip();
         
-        // FORCE Adobe Stock Format for Vector CSVs as requested.
-        // This ensures headers are always: Filename, Title, Keywords, Category.
-        const targetPlatform = Platform.ADOBE_STOCK;
+        // 1. Uploaded Files CSV (Standard)
+        const standardCsv = convertToCsv(data, Platform.ADOBE_STOCK);
+        zip.file("adobe_stock_uploaded_formats.csv", standardCsv);
 
-        // 1. Source CSV (Original Filenames: e.g. image.jpg or vector.svg)
-        const sourceCsv = convertToCsv(data, targetPlatform);
-        zip.file("metadata_source.csv", sourceCsv);
-
-        // 2. EPS CSV (Filenames transformed to .eps: e.g. image.eps or vector.eps)
-        const epsCsv = convertToCsv(data, targetPlatform, (name) => {
+        // 2. EPS Mapped CSV (Forces .eps extension in filename for sidecar submissions)
+        const epsCsv = convertToCsv(data, Platform.ADOBE_STOCK, (name) => {
             const parts = name.split('.');
             if (parts.length > 1) parts.pop();
             return parts.join('.') + ".eps";
         });
-        zip.file("metadata_eps.csv", epsCsv);
+        zip.file("adobe_stock_eps_vectors.csv", epsCsv);
 
         const content = await zip.generateAsync({type:"blob"});
         const url = URL.createObjectURL(content);
         const link = document.createElement("a");
         link.href = url;
-        link.download = `vector-metadata-export-adobe-stock-${new Date().toISOString().slice(0,10)}.zip`;
+        link.download = `adobe-stock-metadata-bundle-${new Date().toISOString().slice(0,10)}.zip`;
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
         URL.revokeObjectURL(url);
     } catch (error) {
-        console.error("Failed to generate ZIP:", error);
-        alert("An error occurred while creating the ZIP file.");
+        console.error("Failed to generate Adobe Stock ZIP bundle:", error);
     }
 };

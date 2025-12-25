@@ -9,10 +9,13 @@ export enum Platform {
     TEMPLATE_MONSTER = "Template Monster",
 }
 
-export enum ImageType {
-    NONE = "None",
-    VECTOR = "Vector/Illustration",
-    LOGO = "Logo Design",
+export enum AssetStyle {
+    REALISTIC = "Realistic Photo",
+    LOGO = "Logo/Icon",
+    SILHOUETTE = "Silhouette",
+    VECTOR_FLAT = "Flat Vector",
+    THREE_D = "3D Render",
+    ILLUSTRATION = "Digital Illustration",
 }
 
 export enum FileStatus {
@@ -22,18 +25,27 @@ export enum FileStatus {
     ERROR = "Error",
 }
 
-export enum AIProvider {
-    GEMINI = "Gemini",
-    MISTRAL = "Mistral",
-    OPENROUTER = "OpenRouter",
-    GROQ = "Groq",
+export enum ImageType {
+    IMAGE = "Image",
+    VECTOR = "Vector",
+    VIDEO = "Video",
 }
 
-export enum GeminiModel {
-    FLASH_LITE = "gemini-flash-lite-latest",
-    FLASH = "gemini-2.5-flash",
-    FLASH_2_0 = "gemini-2.0-flash-exp",
-    PRO = "gemini-3-pro-preview",
+export enum AIProvider {
+    GEMINI = "Gemini",
+    OPENAI = "OpenAI",
+    MISTRAL = "Mistral",
+    DEEPSEEK = "DeepSeek",
+    GROQ = "Groq",
+    GITHUB = "GitHub Models",
+    OPENROUTER = "OpenRouter",
+}
+
+export interface ApiKey {
+    id: string;
+    key: string;
+    status: 'valid' | 'invalid' | 'testing' | 'pending' | 'rate_limited' | 'exhausted';
+    lastUsed?: number;
 }
 
 export interface Settings {
@@ -41,22 +53,16 @@ export interface Settings {
     titleLength: { min: number; max: number };
     descriptionLength: { min: number; max: number };
     maxKeywords: number;
-    prefix: string;
-    suffix: string;
-    negativeTitleWords: string;
-    negativeKeywords: string;
     isolatedWhite: boolean;
     isolatedTransparent: boolean;
-    imageType: ImageType;
-    mistralApiKeys: string[]; // Mistral keys
-    geminiApiKeys: string[]; // Gemini keys
-    openRouterApiKeys: string[]; // OpenRouter keys
-    groqApiKeys: string[]; // Groq keys
+    safeMode: boolean;
+    titlePrefix: string;
+    titleSuffix: string;
     aiProvider: AIProvider;
+    providerKeys: Record<AIProvider, ApiKey[]>;
+    activeModels: Record<AIProvider, string>;
     singleGenerationMode: boolean;
-    geminiModel: GeminiModel;
-    openRouterModel: string;
-    groqModel: string;
+    imageType?: ImageType;
 }
 
 export interface ProcessedFile {
@@ -64,11 +70,13 @@ export interface ProcessedFile {
     file: File;
     preview: string;
     status: FileStatus;
+    style?: AssetStyle;
     metadata: {
         title: string;
         description: string;
         keywords: string[];
         selectedKeywords: string[];
+        category?: string;
     };
     error?: string;
 }
