@@ -1,5 +1,8 @@
 {
   "name": "StockMeta Pro",
   "description": "Professional-grade neural metadata engine for stock asset management. Features platform-specific SEO optimization for Adobe Stock, Shutterstock, and more. Optimized for bulk processing with multi-node API rotation and deep visual analysis.",
-  "requestFramePermissions": []
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
 }

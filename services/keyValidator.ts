@@ -28,7 +28,7 @@ export const validateKey = async (provider: AIProvider, key: string): Promise<Ap
                 break;
             case AIProvider.GROQ:
                 endpoint = "https://api.groq.com/openai/v1/chat/completions";
-                // Using stable llama-3.3-70b-versatile for validation
+                // Using the most stable model available for validation
                 testPayload.model = "llama-3.3-70b-versatile"; 
                 break;
             case AIProvider.MISTRAL:
@@ -55,34 +55,18 @@ export const validateKey = async (provider: AIProvider, key: string): Promise<Ap
             body: JSON.stringify(testPayload) 
         });
         
-        // 200 is always valid
         if (response.status === 200) return 'valid';
-        
-        // 401 is a definitive Authentication Failure
         if (response.status === 401) return 'invalid';
-        
-        // 402 is specifically out of money
         if (response.status === 402) return 'exhausted';
-        
-        // 429 is too many requests
         if (response.status === 429) return 'rate_limited';
 
-        /**
-         * RELAXED VALIDATION:
-         * If we get a 400 (Bad Request) or 404 (Not Found), it often means the *model ID* 
-         * we used for testing is wrong for that specific account/key tier, but the 
-         * API key itself might still be valid for other models.
-         * We default to 'valid' to let the user attempt to use it.
-         */
+        // 404/400 often means model is wrong but key might be fine.
         if (response.status === 400 || response.status === 404) {
-            console.warn(`Key validation probe returned ${response.status} for ${provider}. Key likely valid, but test model rejected.`);
             return 'valid';
         }
         
         return 'invalid';
     } catch (e) {
-        console.error(`Validation probe failed for ${provider}:`, e);
-        // On network error, don't kill the key, just mark as testing or pending
         return 'testing';
     }
 };

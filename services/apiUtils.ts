@@ -1,7 +1,7 @@
 
 /**
- * Processes an array of items with a dynamic concurrency controller.
- * Designed for ultra-smooth batch execution and silent recovery.
+ * Processes an array of items with a turbo concurrency controller.
+ * Designed for high-speed batch execution and zero-friction recovery.
  */
 export const processWithConcurrency = async <T, R>(
   items: T[],
@@ -23,15 +23,13 @@ export const processWithConcurrency = async <T, R>(
       .then(result => {
         results[itemIndex] = result;
       })
-      .catch(err => {
-        // Silent error logging - the system will handle retry at a higher level
-        console.warn(`Node ${itemIndex} encountered a transient issue, shifting context...`);
+      .catch((err) => {
+        console.error(`Node ${itemIndex} execution failed:`, err);
       })
       .finally(async () => {
         activePromises.delete(promise);
-        // Subtle pacing to prevent API thundering-herd effects
         if (delayMs > 0) {
-             await new Promise(resolve => setTimeout(resolve, delayMs + (Math.random() * 200)));
+          await new Promise(resolve => setTimeout(resolve, delayMs / 2 + (Math.random() * delayMs / 2)));
         }
         await queueNext();
       });
@@ -56,28 +54,38 @@ export const processWithConcurrency = async <T, R>(
 };
 
 /**
- * Enhanced Silent Retry with Jitter.
- * Prevents 429/500 errors from breaking the user flow.
+ * Ultra-Silent Resiliency Engine.
+ * Handles rate limits and server overloads entirely in the background.
+ * Updated: 404 errors no longer trigger retries to prevent hangs on invalid model IDs.
  */
 export const retryWithBackoff = async <T>(
     asyncFn: () => Promise<T>,
-    retries = 5, // Increased retries for "Super Smooth" experience
-    delay = 1500,
+    retries = 3, // Reduced retries for faster failure feedback
+    delay = 1000,
     shouldRetry: (error: any) => boolean = (err) => {
-        const status = err?.status;
-        // Retry on rate limits, server overloads, and mysterious 404s
-        return status === 429 || status >= 500 || status === 404 || !status;
+        const status = err?.status || err?.error?.code;
+        
+        // DO NOT RETRY:
+        // 404: Model not found (invalid configuration)
+        // 401/403: Auth issues
+        // 400: Bad request
+        if (status === 404 || status === 401 || status === 403 || status === 400) return false;
+        
+        // RETRY:
+        // 429: Rate limited
+        // 5xx: Server errors
+        // No status: Likely network connection / fetch failure
+        return status === 429 || status >= 500 || !status || err.message?.includes('fetch') || err.message?.includes('network');
     }
 ): Promise<T> => {
     try {
         return await asyncFn();
     } catch (error: any) {
         if (retries > 0 && shouldRetry(error)) {
-            // Add jitter: random variation to prevent synchronized retries
-            const jitter = Math.random() * 1000;
+            const jitter = Math.random() * 500;
             const nextDelay = (error?.status === 429 ? delay * 4 : delay * 2) + jitter;
             
-            console.debug(`[Resiliency Engine] Silent retry in ${Math.round(nextDelay)}ms...`);
+            console.debug(`Retrying after error: ${error.message || 'Unknown'}. Attempts left: ${retries}`);
             await new Promise(res => setTimeout(res, nextDelay));
             return retryWithBackoff(asyncFn, retries - 1, nextDelay, shouldRetry);
         } else {
