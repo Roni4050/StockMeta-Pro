@@ -21,9 +21,12 @@ const ControlGroup: React.FC<{ label: string; children: React.ReactNode; rightEl
     </div>
 );
 
-const ToggleRow: React.FC<{ label: string; checked: boolean; onChange: (checked: boolean) => void }> = ({ label, checked, onChange }) => (
+const ToggleRow: React.FC<{ label: string; checked: boolean; onChange: (checked: boolean) => void; subLabel?: string }> = ({ label, checked, onChange, subLabel }) => (
     <div className="flex items-center justify-between py-3 px-1 group cursor-pointer" onClick={() => onChange(!checked)}>
-        <span className="text-[13px] font-bold text-slate-400 group-hover:text-slate-200 transition-colors">{label}</span>
+        <div className="flex flex-col">
+            <span className="text-[13px] font-bold text-slate-400 group-hover:text-slate-200 transition-colors">{label}</span>
+            {subLabel && <span className="text-[9px] font-bold text-indigo-500/60 uppercase tracking-tighter">{subLabel}</span>}
+        </div>
         <button
             className={`relative inline-flex h-5 w-10 items-center rounded-full transition-all duration-300 focus:outline-none ${
                 checked ? 'bg-indigo-500 shadow-[0_0_12px_rgba(79,70,229,0.4)]' : 'bg-white/[0.05] border border-white/[0.05]'
@@ -98,8 +101,8 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, setSetti
                                 <span className="text-[9px] font-bold text-slate-500 uppercase tracking-tighter">{activeKeyCount} Nodes Online</span>
                             </div>
                             {settings.safeMode && (
-                                <div className="flex items-center gap-1 text-[9px] text-amber-500 font-bold uppercase tracking-tighter">
-                                    <InfoIcon className="w-3 h-3" /> Safe Mode Active
+                                <div className="flex items-center gap-1 text-[9px] text-indigo-500 font-bold uppercase tracking-tighter">
+                                    <InfoIcon className="w-3 h-3" /> 3x Parallel Active
                                 </div>
                             )}
                         </div>
@@ -123,7 +126,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, setSetti
             {/* PARAMETERS SECTION */}
             <div className="space-y-6">
                 <div className="flex items-center gap-3 px-1">
-                    <div className="w-1 h-3.5 bg-emerald-500 rounded-full shadow-[0_0_10px_rgba(16,185,129,0.5)]"></div>
+                    <div className="w-1 h-3.5 bg-emerald-500 rounded-full shadow-[0_0_100px_rgba(16,185,129,0.5)]"></div>
                     <h2 className="text-[11px] font-black text-white uppercase tracking-[0.3em]">SEO Parameters</h2>
                 </div>
 
@@ -139,7 +142,12 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, setSetti
                         </ControlGroup>
                         <ControlGroup label="Safe Batch">
                             <div className="h-full flex items-center justify-center bg-black/20 rounded-2xl border border-white/[0.02]">
-                                <ToggleRow label="" checked={settings.safeMode} onChange={(v) => setSettings(s => ({...s, safeMode: v}))} />
+                                <ToggleRow 
+                                    label="" 
+                                    subLabel="Option 3x"
+                                    checked={settings.safeMode} 
+                                    onChange={(v) => setSettings(s => ({...s, safeMode: v}))} 
+                                />
                             </div>
                         </ControlGroup>
                     </div>
@@ -164,7 +172,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, setSetti
                 </div>
             </div>
 
-            {/* VISUAL ISOLATION SECTION - MODERNIZED */}
+            {/* VISUAL ISOLATION SECTION */}
             <div className="space-y-4">
                 <div className="flex items-center gap-3 px-1">
                     <div className="w-1 h-3.5 bg-amber-500 rounded-full shadow-[0_0_10px_rgba(245,158,11,0.5)]"></div>

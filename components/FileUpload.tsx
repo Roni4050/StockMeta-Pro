@@ -1,4 +1,5 @@
 
+// Added React import to fix 'Cannot find namespace React' errors
 import React, { useCallback, useState } from 'react';
 
 interface FileUploadProps {
@@ -51,7 +52,6 @@ export const FileUpload: React.FC<FileUploadProps> = ({ onFilesChange, isUploadi
             } ${isUploading ? 'opacity-50 pointer-events-none' : ''}`}
             onClick={() => !isUploading && document.getElementById('file-upload')?.click()}
         >
-            {/* Background Decorative Gradient */}
             <div className="absolute inset-0 bg-gradient-to-tr from-indigo-500/[0.02] to-purple-500/[0.02] pointer-events-none"></div>
             
             <div className="relative z-10 space-y-8 text-center">
@@ -61,7 +61,7 @@ export const FileUpload: React.FC<FileUploadProps> = ({ onFilesChange, isUploadi
                             <div className="absolute inset-0 border-[3px] border-white/5 rounded-full"></div>
                             <div className="absolute inset-0 border-[3px] border-transparent border-t-indigo-500 rounded-full animate-spin"></div>
                         </div>
-                        <h3 className="text-xl font-extrabold text-white tracking-tight animate-pulse">Initializing Neural Pipeline...</h3>
+                        <h3 className="text-xl font-extrabold text-white tracking-tight animate-pulse">Initializing SEO Analysis...</h3>
                     </div>
                 ) : (
                     <>
@@ -75,17 +75,17 @@ export const FileUpload: React.FC<FileUploadProps> = ({ onFilesChange, isUploadi
                         <div className="space-y-3">
                             <h2 className="text-2xl font-extrabold text-white tracking-tight">
                                 <span className="text-indigo-400 group-hover:text-indigo-300 transition-colors">Import Assets</span>
-                                <span className="mx-3 text-slate-600 font-medium">or drop to start</span>
+                                <span className="mx-3 text-slate-600 font-medium">or drop files</span>
                             </h2>
                             <p className="text-[11px] text-slate-500 font-bold uppercase tracking-[0.3em] max-w-md mx-auto leading-relaxed">
-                                EPS • JPG • PNG • Vector • 4K Video Support
+                                EPS • JPJ • JPG • PNG • Video (MP4/MOV)
                             </p>
                         </div>
 
                          <div className="flex justify-center gap-4 mt-10">
                              <div className="px-5 py-2 rounded-2xl bg-white/[0.02] border border-white/5 flex items-center gap-3">
                                 <div className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-pulse"></div>
-                                <span className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Automatic EPS Linking Active</span>
+                                <span className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Adobe Stock Guidelines Sync: Active</span>
                              </div>
                          </div>
                     </>
